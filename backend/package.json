@@ -1,0 +1,32 @@
+{
+  "name": "postpilot-bot-backend",
+  "version": "1.0.0",
+  "description": "PostPilot Bot backend - Telegram AI assistant for channel owners",
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "tsc",
+    "start": "node dist/main.js",
+    "migrate": "node dist/scripts/migrate.js"
+  },
+  "keywords": ["telegram", "bot", "ai", "openai"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@hono/node-server": "^1.8.2",
+    "grammy": "^1.21.1",
+    "hono": "^3.12.0",
+    "openai": "^4.24.1",
+    "pg": "^8.11.3",
+    "jsonwebtoken": "^9.0.2",
+    "dotenv": "^16.3.1",
+    "node-fetch": "^3.3.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.6",
+    "@types/pg": "^8.10.9",
+    "@types/jsonwebtoken": "^9.0.5",
+    "typescript": "^5.3.3",
+    "tsx": "^4.7.0"
+  }
+}

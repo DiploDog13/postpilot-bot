@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: postpilot
+      POSTGRES_USER: postpilot
+      POSTGRES_PASSWORD: postpilot_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  backend:
+    build: ./backend
+    ports:
+      - "3000:3000"
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      DATABASE_URL: postgresql://postpilot:postpilot_password@postgres:5432/postpilot
+      WEBHOOK_URL: ${WEBHOOK_URL}
+      MINI_APP_URL: ${MINI_APP_URL}
+      JWT_SECRET: ${JWT_SECRET}
+    depends_on:
+      - postgres
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "80:80"
+    environment:
+      VITE_API_URL: http://localhost:3000
+
+volumes:
+  postgres_data:
