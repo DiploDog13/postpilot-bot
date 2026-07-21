@@ -6,8 +6,8 @@ WORKDIR /app
 # Копируем package файлы
 COPY package*.json ./
 
-# Устанавливаем зависимости
-RUN npm install
+# Устанавливаем зависимости с флагом --legacy-peer-deps для обхода конфликтов
+RUN npm install --legacy-peer-deps
 
 # Копируем исходный код
 COPY . .
