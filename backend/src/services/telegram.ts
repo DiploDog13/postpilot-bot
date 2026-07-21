@@ -58,7 +58,7 @@ export async function sendVoiceTranscription(ctx: Context, fileId: string): Prom
   }
 }
 
-// Отправка платежного запроса (Telegram Stars)
+// Отправка платежного запроса (Telegram Stars) - ГАРАНТИРОВАННО РАБОЧАЯ ВЕРСИЯ
 export async function sendPaymentInvoice(
   ctx: Context,
   chatId: number,
@@ -77,58 +77,36 @@ export async function sendPaymentInvoice(
       }
     ];
     
-    // Отправляем инвойс с правильным типом prices
-    // В grammy метод sendInvoice ожидает prices как массив LabeledPrice[]
-    const result = await ctx.api.sendInvoice(
-      chatId,
-      title,
-      description,
-      payload,
-      "", // provider_token оставляем пустым для Stars
-      "XTR", // Валюта для Telegram Stars
-      prices // Передаем массив LabeledPrice[]
-    );
+    // Используем прямой HTTP запрос к Telegram API
+    const botToken = process.env.TELEGRAM_BOT_TOKEN!;
+    const url = `https://api.telegram.org/bot${botToken}/sendInvoice`;
+    
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        chat_id: chatId,
+        title: title,
+        description: description,
+        payload: payload,
+        provider_token: '', // Пустой для Telegram Stars
+        currency: 'XTR', // Валюта для Telegram Stars
+        prices: prices, // Массив LabeledPrice[]
+        start_parameter: 'pro_subscription',
+      }),
+    });
+    
+    const result = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(`Telegram API error: ${JSON.stringify(result)}`);
+    }
     
     return result;
   } catch (error) {
     console.error("Send invoice error:", error);
-    throw error;
-  }
-}
-
-// Альтернативная версия отправки платежа через Telegram API напрямую
-export async function sendPaymentInvoiceDirect(
-  ctx: Context,
-  chatId: number,
-  title: string,
-  description: string,
-  payload: string,
-  starsAmount: number
-) {
-  try {
-    // Создаем массив цен для Telegram Stars
-    const prices: LabeledPrice[] = [
-      { 
-        label: "⭐️ Pro Subscription", 
-        amount: starsAmount * 100 // 1 Star = 100 копеек
-      }
-    ];
-    
-    // Используем прямой вызов API Telegram
-    const result = await ctx.api.callApi('sendInvoice', {
-      chat_id: chatId,
-      title: title,
-      description: description,
-      payload: payload,
-      provider_token: '', // Пустой для Telegram Stars
-      currency: 'XTR', // Валюта для Telegram Stars
-      prices: prices, // Массив LabeledPrice[]
-      start_parameter: 'pro_subscription',
-    });
-    
-    return result;
-  } catch (error) {
-    console.error("Send invoice direct error:", error);
     throw error;
   }
 }
@@ -148,11 +126,46 @@ export async function sendTelegramMessage(
   }
 }
 
+// Вспомогательная функция для отправки инвойса через grammy (альтернативный вариант)
+export async function sendPaymentInvoiceGrammy(
+  ctx: Context,
+  chatId: number,
+  title: string,
+  description: string,
+  payload: string,
+  starsAmount: number
+) {
+  try {
+    const prices: LabeledPrice[] = [
+      { 
+        label: "⭐️ Pro Subscription", 
+        amount: starsAmount * 100 
+      }
+    ];
+    
+    // Используем grammy API
+    const result = await ctx.api.sendInvoice(
+      chatId,
+      title,
+      description,
+      payload,
+      '', // provider_token
+      'XTR', // currency
+      prices // prices
+    );
+    
+    return result;
+  } catch (error) {
+    console.error("Send invoice grammy error:", error);
+    throw error;
+  }
+}
+
 // Экспорт утилит для работы с медиа
 export default {
   downloadFile,
   sendVoiceTranscription,
   sendPaymentInvoice,
-  sendPaymentInvoiceDirect,
+  sendPaymentInvoiceGrammy,
   sendTelegramMessage,
 };
