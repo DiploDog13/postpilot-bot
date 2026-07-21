@@ -13,36 +13,31 @@ export interface User {
   id: number;
   telegram_id: number;
   username?: string;
-  tier: 'free' | 'pro';
-  subscription_end?: string;
-  transforms_today: number;
-  transforms_reset_at: string;
-  referred_count: number;
-  referral_code: string;
-  created_at: string;
+  subscription: "free" | "pro";
+  transform_count: number;
+  created_at: Date;
+  updated_at: Date;
 }
 
 export interface Draft {
   id: number;
   user_id: number;
-  input_text?: string;
-  input_type: string;
+  content: string;
   style: string;
-  generated_post: string;
-  is_published: boolean;
-  created_at: string;
-  updated_at: string;
+  status: "draft" | "published" | "archived";
+  created_at: Date;
+  updated_at: Date;
 }
 
 export interface BrandVoice {
   id: number;
   user_id: number;
   name: string;
-  tone?: string;
-  examples: string[];
-  created_at: string;
+  description: string;
+  tone: string;
+  style: string;
+  created_at: Date;
 }
-
 export interface Analytics {
   id: number;
   user_id: number;
@@ -140,11 +135,31 @@ export async function getOrCreateUser(telegramId: number, username?: string): Pr
 }
 
 export async function getUserByTelegramId(telegramId: number): Promise<User | null> {
-  const result = await pool.query(
-    'SELECT * FROM users WHERE telegram_id = $1',
-    [telegramId]
-  );
-  return result.rows[0] || null;
+  // Ваша реализация
+  return null;
+}
+export async function saveDraft(draft: Omit<Draft, "id" | "created_at" | "updated_at">): Promise<Draft> {
+  // Ваша реализация
+  return {} as Draft;
+}
+
+export async function updateDraft(id: number, data: Partial<Draft>): Promise<Draft> {
+  // Ваша реализация
+  return {} as Draft;
+}
+
+export async function getDraftsByUser(userId: number): Promise<Draft[]> {
+  // Ваша реализация
+  return [];
+}
+
+export async function incrementTransformCount(telegramId: number): Promise<void> {
+  // Ваша реализация
+}
+
+export async function getTransformCount(telegramId: number): Promise<number> {
+  // Ваша реализация
+  return 0;
 }
 
 export async function getUserById(id: number): Promise<User | null> {
