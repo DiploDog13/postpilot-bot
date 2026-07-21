@@ -4,10 +4,11 @@
   "description": "PostPilot Bot Backend",
   "main": "dist/main.js",
   "scripts": {
-    "build": "tsc",
+    "build": "node ./node_modules/typescript/bin/tsc",
     "start": "node dist/main.js",
-    "dev": "ts-node src/main.ts",
-    "watch": "ts-node --watch src/main.ts"
+    "dev": "node --loader ts-node/esm src/main.ts",
+    "watch": "ts-node --watch src/main.ts",
+    "postinstall": "chmod +x node_modules/.bin/*"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",
