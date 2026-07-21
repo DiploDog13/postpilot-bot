@@ -2,15 +2,21 @@ FROM node:18-alpine
 
 WORKDIR /app
 
+# Копируем файлы
 COPY package*.json ./
 COPY tsconfig.json ./
 
+# Устанавливаем зависимости
 RUN npm install
 
+# Копируем исходный код
 COPY . .
 
-# Вместо npm run build используем npx
-RUN npx tsc
+# Собираем проект
+RUN npx tsc --noEmitOnError false
+
+# Очищаем и даем права
+RUN chmod +x node_modules/.bin/*
 
 EXPOSE 3000
 
