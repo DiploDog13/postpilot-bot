@@ -1,23 +1,17 @@
-FROM node:18-alpine
+FROM node:20-alpine
 
 WORKDIR /app
 
-# Копируем файлы
 COPY package*.json ./
 COPY tsconfig.json ./
 
-# Устанавливаем зависимости
-RUN npm install
+RUN npm ci
 
-# Копируем исходный код
 COPY . .
 
-# Собираем проект
-RUN npx tsc --noEmitOnError false
-
-# Очищаем и даем права
-RUN chmod +x node_modules/.bin/*
+# Обходим проблему с executable bit у tsc
+RUN node ./node_modules/typescript/bin/tsc --noEmitOnError false
 
 EXPOSE 3000
 
-CMD ["node", "dist/index.js"]
+CMD ["node", "dist/main.js"]
