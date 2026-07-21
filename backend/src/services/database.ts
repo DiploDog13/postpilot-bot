@@ -5,7 +5,7 @@ dotenv.config();
 
 const { Pool } = pg;
 
-export const pool = new Pool({
+const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
 
@@ -14,55 +14,131 @@ export interface User {
   telegram_id: number;
   username?: string;
   tier: 'free' | 'pro';
-  subscription_end?: Date;
+  subscription_end?: string;
   transforms_today: number;
-  transforms_reset_at: Date;
-  referrer_id?: number;
+  transforms_reset_at: string;
   referred_count: number;
-  created_at: Date;
+  referral_code: string;
+  created_at: string;
 }
 
 export interface Draft {
   id: number;
   user_id: number;
   input_text?: string;
-  input_type: 'forwarded' | 'voice' | 'link';
-  style: 'professional' | 'viral' | 'funny' | 'sales' | 'educational';
+  input_type: string;
+  style: string;
   generated_post: string;
-  original_message_id?: number;
   is_published: boolean;
-  published_at?: Date;
-  created_at: Date;
-  updated_at: Date;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface BrandVoice {
   id: number;
   user_id: number;
-  name?: string;
+  name: string;
   tone?: string;
   examples: string[];
-  created_at: Date;
+  created_at: string;
 }
 
 export interface Analytics {
   id: number;
   user_id: number;
-  event_type: 'transform' | 'draft_saved' | 'post_published' | 'shared';
-  metadata?: any;
-  created_at: Date;
+  date: string;
+  drafts_generated: number;
+  drafts_published: number;
 }
 
 export interface Payment {
   id: number;
   user_id: number;
-  amount_stars: number;
-  status: 'pending' | 'completed' | 'failed';
+  amount: number;
+  currency: string;
+  status: string;
   telegram_payment_id?: string;
-  created_at: Date;
+  created_at: string;
 }
 
-// User operations
+export async function initializeDatabase() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      telegram_id BIGINT UNIQUE NOT NULL,
+      username VARCHAR(255),
+      tier VARCHAR(20) DEFAULT 'free',
+      subscription_end TIMESTAMP,
+      transforms_today INTEGER DEFAULT 0,
+      transforms_reset_at TIMESTAMP DEFAULT NOW() + INTERVAL '1 day',
+      referred_count INTEGER DEFAULT 0,
+      referral_code VARCHAR(20) UNIQUE,
+      created_at TIMESTAMP DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS drafts (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id),
+      input_text TEXT,
+      input_type VARCHAR(50),
+      style VARCHAR(50),
+      generated_post TEXT NOT NULL,
+      is_published BOOLEAN DEFAULT false,
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS brand_voices (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id),
+      name VARCHAR(255) NOT NULL,
+      tone TEXT,
+      examples TEXT[],
+      created_at TIMESTAMP DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS analytics (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id),
+      date DATE DEFAULT CURRENT_DATE,
+      drafts_generated INTEGER DEFAULT 0,
+      drafts_published INTEGER DEFAULT 0,
+      UNIQUE(user_id, date)
+    );
+
+    CREATE TABLE IF NOT EXISTS payments (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id),
+      amount INTEGER NOT NULL,
+      currency VARCHAR(10) DEFAULT 'XTR',
+      status VARCHAR(20) DEFAULT 'pending',
+      telegram_payment_id VARCHAR(255),
+      created_at TIMESTAMP DEFAULT NOW()
+    );
+  `);
+}
+
+export async function getOrCreateUser(telegramId: number, username?: string): Promise<User> {
+  const existing = await pool.query(
+    'SELECT * FROM users WHERE telegram_id = $1',
+    [telegramId]
+  );
+
+  if (existing.rows.length > 0) {
+    return existing.rows[0];
+  }
+
+  const referralCode = Math.random().toString(36).substring(2, 12);
+  const result = await pool.query(
+    `INSERT INTO users (telegram_id, username, referral_code)
+     VALUES ($1, $2, $3)
+     RETURNING *`,
+    [telegramId, username, referralCode]
+  );
+
+  return result.rows[0];
+}
+
 export async function getUserByTelegramId(telegramId: number): Promise<User | null> {
   const result = await pool.query(
     'SELECT * FROM users WHERE telegram_id = $1',
@@ -71,114 +147,112 @@ export async function getUserByTelegramId(telegramId: number): Promise<User | nu
   return result.rows[0] || null;
 }
 
-export async function createUser(telegramId: number, username?: string, referrerId?: number): Promise<User> {
+export async function getUserById(id: number): Promise<User | null> {
   const result = await pool.query(
-    `INSERT INTO users (telegram_id, username, referrer_id) 
-     VALUES ($1, $2, $3) 
-     RETURNING *`,
-    [telegramId, username, referrerId]
+    'SELECT * FROM users WHERE id = $1',
+    [id]
   );
-  return result.rows[0];
+  return result.rows[0] || null;
 }
 
-export async function updateUserTier(userId: number, tier: 'free' | 'pro', subscriptionEnd?: Date): Promise<void> {
-  await pool.query(
-    'UPDATE users SET tier = $1, subscription_end = $2 WHERE id = $3',
-    [tier, subscriptionEnd, userId]
-  );
+export async function canTransform(user: User): Promise<boolean> {
+  if (user.tier === 'pro') return true;
+  
+  const now = new Date();
+  const resetAt = new Date(user.transforms_reset_at);
+  
+  if (now > resetAt) {
+    await pool.query(
+      'UPDATE users SET transforms_today = 0, transforms_reset_at = NOW() + INTERVAL \'1 day\' WHERE id = $1',
+      [user.id]
+    );
+    return true;
+  }
+  
+  return user.transforms_today < 10;
 }
 
-export async function incrementTransformCount(userId: number): Promise<void> {
+export async function incrementTransforms(userId: number): Promise<void> {
   await pool.query(
     'UPDATE users SET transforms_today = transforms_today + 1 WHERE id = $1',
     [userId]
   );
 }
 
-export async function resetDailyTransforms(userId: number): Promise<void> {
-  await pool.query(
-    'UPDATE users SET transforms_today = 0, transforms_reset_at = NOW() + INTERVAL \'1 day\' WHERE id = $1',
-    [userId]
-  );
-}
-
-export async function checkRateLimit(userId: number): Promise<{ allowed: boolean; remaining: number }> {
-  const user = await pool.query('SELECT * FROM users WHERE id = $1', [userId]);
-  const userData = user.rows[0];
-  
-  if (userData.tier === 'pro') {
-    return { allowed: true, remaining: -1 }; // Unlimited
-  }
-  
-  if (new Date(userData.transforms_reset_at) < new Date()) {
-    await resetDailyTransforms(userId);
-    await incrementTransformCount(userId);
-    return { allowed: true, remaining: 9 };
-  }
-  
-  if (userData.transforms_today >= 10) {
-    return { allowed: false, remaining: 0 };
-  }
-  
-  await incrementTransformCount(userId);
-  return { allowed: true, remaining: 10 - userData.transforms_today - 1 };
-}
-
-// Draft operations
-export async function createDraft(
-  userId: number,
-  inputText: string,
-  inputType: 'forwarded' | 'voice' | 'link',
-  style: 'professional' | 'viral' | 'funny' | 'sales' | 'educational',
-  generatedPost: string,
-  originalMessageId?: number
-): Promise<Draft> {
+export async function upgradeToPro(userId: number, days: number = 30): Promise<User> {
   const result = await pool.query(
-    `INSERT INTO drafts (user_id, input_text, input_type, style, generated_post, original_message_id) 
-     VALUES ($1, $2, $3, $4, $5, $6) 
+    `UPDATE users 
+     SET tier = 'pro', 
+         subscription_end = NOW() + INTERVAL '${days} days',
+         transforms_today = 0
+     WHERE id = $1
      RETURNING *`,
-    [userId, inputText, inputType, style, generatedPost, originalMessageId]
+    [userId]
   );
   return result.rows[0];
 }
 
-export async function getDraftsByUserId(userId: number, limit = 20): Promise<Draft[]> {
+export async function createDraft(
+  userId: number,
+  inputText: string | undefined,
+  inputType: string,
+  style: string,
+  generatedPost: string
+): Promise<Draft> {
   const result = await pool.query(
-    'SELECT * FROM drafts WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2',
-    [userId, limit]
+    `INSERT INTO drafts (user_id, input_text, input_type, style, generated_post)
+     VALUES ($1, $2, $3, $4, $5)
+     RETURNING *`,
+    [userId, inputText, inputType, style, generatedPost]
+  );
+  return result.rows[0];
+}
+
+export async function getDraftsByUserId(userId: number): Promise<Draft[]> {
+  const result = await pool.query(
+    'SELECT * FROM drafts WHERE user_id = $1 ORDER BY created_at DESC',
+    [userId]
   );
   return result.rows;
 }
 
-export async function getDraftById(draftId: number): Promise<Draft | null> {
-  const result = await pool.query('SELECT * FROM drafts WHERE id = $1', [draftId]);
+export async function getDraftById(id: number, userId: number): Promise<Draft | null> {
+  const result = await pool.query(
+    'SELECT * FROM drafts WHERE id = $1 AND user_id = $2',
+    [id, userId]
+  );
   return result.rows[0] || null;
 }
 
-export async function updateDraft(draftId: number, updates: Partial<Draft>): Promise<Draft> {
-  const fields = Object.keys(updates).map((key, i) => `${key} = $${i + 2}`).join(', ');
-  const values = Object.values(updates);
+export async function updateDraft(id: number, userId: number, updates: Partial<Draft>): Promise<Draft> {
   const result = await pool.query(
-    `UPDATE drafts SET ${fields}, updated_at = NOW() WHERE id = $1 RETURNING *`,
-    [draftId, ...values]
+    `UPDATE drafts 
+     SET generated_post = COALESCE($1, generated_post),
+         is_published = COALESCE($2, is_published),
+         updated_at = NOW()
+     WHERE id = $3 AND user_id = $4
+     RETURNING *`,
+    [updates.generated_post, updates.is_published, id, userId]
   );
   return result.rows[0];
 }
 
-export async function deleteDraft(draftId: number): Promise<void> {
-  await pool.query('DELETE FROM drafts WHERE id = $1', [draftId]);
+export async function deleteDraft(id: number, userId: number): Promise<void> {
+  await pool.query(
+    'DELETE FROM drafts WHERE id = $1 AND user_id = $2',
+    [id, userId]
+  );
 }
 
-// Brand voice operations
 export async function createBrandVoice(
   userId: number,
   name: string,
-  tone: string,
+  tone: string | undefined,
   examples: string[]
 ): Promise<BrandVoice> {
   const result = await pool.query(
-    `INSERT INTO brand_voices (user_id, name, tone, examples) 
-     VALUES ($1, $2, $3, $4) 
+    `INSERT INTO brand_voices (user_id, name, tone, examples)
+     VALUES ($1, $2, $3, $4)
      RETURNING *`,
     [userId, name, tone, examples]
   );
@@ -193,133 +267,53 @@ export async function getBrandVoicesByUserId(userId: number): Promise<BrandVoice
   return result.rows;
 }
 
-export async function getLatestBrandVoice(userId: number): Promise<BrandVoice | null> {
-  const result = await pool.query(
-    'SELECT * FROM brand_voices WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1',
-    [userId]
-  );
-  return result.rows[0] || null;
-}
-
-// Analytics operations
-export async function logAnalytics(
-  userId: number,
-  eventType: 'transform' | 'draft_saved' | 'post_published' | 'shared',
-  metadata?: any
-): Promise<void> {
+export async function recordAnalytics(userId: number, generated: number, published: number): Promise<void> {
   await pool.query(
-    'INSERT INTO analytics (user_id, event_type, metadata) VALUES ($1, $2, $3)',
-    [userId, eventType, metadata]
+    `INSERT INTO analytics (user_id, drafts_generated, drafts_published)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (user_id, date)
+     DO UPDATE SET
+       drafts_generated = analytics.drafts_generated + $2,
+       drafts_published = analytics.drafts_published + $3`,
+    [userId, generated, published]
   );
 }
 
-export async function getAnalyticsByUserId(userId: number, days = 30): Promise<Analytics[]> {
+export async function getAnalytics(userId: number, days: number = 7): Promise<Analytics[]> {
   const result = await pool.query(
     `SELECT * FROM analytics 
-     WHERE user_id = $1 AND created_at > NOW() - INTERVAL '${days} days' 
-     ORDER BY created_at DESC`,
+     WHERE user_id = $1 AND date >= NOW() - INTERVAL '${days} days'
+     ORDER BY date DESC`,
     [userId]
   );
   return result.rows;
 }
 
-export async function getTransformCountToday(userId: number): Promise<number> {
-  const result = await pool.query(
-    `SELECT COUNT(*) as count FROM analytics 
-     WHERE user_id = $1 AND event_type = 'transform' 
-     AND DATE(created_at) = CURRENT_DATE`,
-    [userId]
-  );
-  return parseInt(result.rows[0].count);
-}
-
-// Payment operations
 export async function createPayment(
   userId: number,
-  amountStars: number,
+  amount: number,
   telegramPaymentId?: string
 ): Promise<Payment> {
   const result = await pool.query(
-    `INSERT INTO payments (user_id, amount_stars, telegram_payment_id) 
-     VALUES ($1, $2, $3) 
+    `INSERT INTO payments (user_id, amount, telegram_payment_id)
+     VALUES ($1, $2, $3)
      RETURNING *`,
-    [userId, amountStars, telegramPaymentId]
+    [userId, amount, telegramPaymentId]
   );
   return result.rows[0];
 }
 
-export async function updatePaymentStatus(
-  paymentId: number,
-  status: 'pending' | 'completed' | 'failed'
-): Promise<void> {
-  await pool.query(
-    'UPDATE payments SET status = $1 WHERE id = $2',
-    [status, paymentId]
+export async function updatePaymentStatus(id: number, status: string): Promise<Payment> {
+  const result = await pool.query(
+    'UPDATE payments SET status = $1 WHERE id = $2 RETURNING *',
+    [status, id]
   );
+  return result.rows[0];
 }
 
-// Initialize database schema
-export async function initializeDatabase(): Promise<void> {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS users (
-      id SERIAL PRIMARY KEY,
-      telegram_id BIGINT UNIQUE NOT NULL,
-      username VARCHAR(255),
-      tier VARCHAR(50) DEFAULT 'free',
-      subscription_end TIMESTAMP,
-      transforms_today INT DEFAULT 0,
-      transforms_reset_at TIMESTAMP DEFAULT NOW() + INTERVAL '1 day',
-      referrer_id INT,
-      referred_count INT DEFAULT 0,
-      created_at TIMESTAMP DEFAULT NOW()
-    );
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS drafts (
-      id SERIAL PRIMARY KEY,
-      user_id INT NOT NULL REFERENCES users(id),
-      input_text TEXT,
-      input_type VARCHAR(50),
-      style VARCHAR(50),
-      generated_post TEXT NOT NULL,
-      original_message_id INT,
-      is_published BOOLEAN DEFAULT FALSE,
-      published_at TIMESTAMP,
-      created_at TIMESTAMP DEFAULT NOW(),
-      updated_at TIMESTAMP DEFAULT NOW()
-    );
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS brand_voices (
-      id SERIAL PRIMARY KEY,
-      user_id INT NOT NULL REFERENCES users(id),
-      name VARCHAR(100),
-      tone TEXT,
-      examples TEXT[],
-      created_at TIMESTAMP DEFAULT NOW()
-    );
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS analytics (
-      id SERIAL PRIMARY KEY,
-      user_id INT NOT NULL REFERENCES users(id),
-      event_type VARCHAR(50),
-      metadata JSONB,
-      created_at TIMESTAMP DEFAULT NOW()
-    );
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS payments (
-      id SERIAL PRIMARY KEY,
-      user_id INT NOT NULL REFERENCES users(id),
-      amount_stars INT,
-      status VARCHAR(50),
-      telegram_payment_id VARCHAR(255),
-      created_at TIMESTAMP DEFAULT NOW()
-    );
-  `);
+export async function incrementReferralCount(referralCode: string): Promise<void> {
+  await pool.query(
+    'UPDATE users SET referred_count = referred_count + 1 WHERE referral_code = $1',
+    [referralCode]
+  );
 }

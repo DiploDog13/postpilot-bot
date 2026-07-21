@@ -7,90 +7,70 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-export type PostStyle = 'professional' | 'viral' | 'funny' | 'sales' | 'educational';
+const stylePrompts: Record<string, string> = {
+  professional: 'You are a professional content writer. Transform the input into a polished, professional post suitable for LinkedIn or a business blog. Keep it concise, insightful, and well-structured.',
+  viral: 'You are a viral content creator. Transform the input into an engaging, shareable post with a hook, emotional appeal, and call-to-action. Use emojis and make it memorable.',
+  funny: 'You are a comedy writer. Transform the input into a humorous, entertaining post. Use wit, wordplay, and relatable humor.',
+  sales: 'You are a copywriter. Transform the input into a persuasive sales post with a strong value proposition, benefits, and clear call-to-action.',
+  educational: 'You are an educator. Transform the input into an informative, easy-to-understand post that teaches something valuable. Use clear explanations and examples.',
+};
 
 export async function generatePost(
-  inputText: string,
-  style: PostStyle,
+  input: string,
+  style: string,
   brandVoiceExamples?: string[]
 ): Promise<string> {
-  const stylePrompts: Record<PostStyle, string> = {
-    professional: 'Write in a professional, authoritative tone. Use clear language and avoid slang.',
-    viral: 'Write in an engaging, viral style. Use hooks, questions, and create FOMO. Make it shareable.',
-    funny: 'Write in a humorous, entertaining tone. Use wit and light-hearted humor.',
-    sales: 'Write in a persuasive sales tone. Focus on benefits, use urgency, and include a clear CTA.',
-    educational: 'Write in an informative, teaching tone. Explain concepts clearly and provide value.',
-  };
+  const systemPrompt = stylePrompts[style] || stylePrompts.professional;
+  
+  let messages: any[] = [
+    { role: 'system', content: systemPrompt },
+  ];
 
-  const systemPrompt = `
-You are a Telegram content expert. Generate a single, publication-ready Telegram post.
-
-Style: ${style}
-${stylePrompts[style]}
-${brandVoiceExamples ? `Learn from these examples of the creator's voice:\n${brandVoiceExamples.join('\n')}` : ''}
-
-Requirements:
-- Keep it under 250 characters
-- Use emojis sparingly (1-2 max)
-- Make it engaging and authentic
-- Reply with ONLY the post text, nothing else
-  `;
-
-  try {
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4-turbo',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: inputText },
-      ],
-      temperature: 0.8,
-      max_tokens: 300,
+  if (brandVoiceExamples && brandVoiceExamples.length > 0) {
+    const examplesText = brandVoiceExamples.join('\n\n');
+    messages.push({
+      role: 'system',
+      content: `Here are examples of the user's writing style:\n${examplesText}\n\nMatch this style in your response.`,
     });
-
-    return response.choices[0].message.content || 'Failed to generate post';
-  } catch (error) {
-    console.error('OpenAI API error:', error);
-    throw new Error('Failed to generate post');
   }
+
+  messages.push({ role: 'user', content: input });
+
+  const completion = await openai.chat.completions.create({
+    model: 'gpt-4-turbo-preview',
+    messages,
+    max_tokens: 500,
+    temperature: 0.7,
+  });
+
+  return completion.choices[0].message.content || 'Failed to generate post';
 }
 
-export async function transcribeVoice(fileId: string, botToken: string): Promise<string> {
-  try {
-    const fileUrl = `https://api.telegram.org/file/bot${botToken}/${fileId}`;
-    
-    const response = await fetch(fileUrl);
-    if (!response.ok) {
-      throw new Error('Failed to fetch voice file');
-    }
-    
-    const audioBuffer = await response.arrayBuffer();
-    const audioFile = new File([audioBuffer], 'audio.ogg', { type: 'audio/ogg' });
+export async function transcribeVoice(audioBuffer: Buffer): Promise<string> {
+  const file = new File([audioBuffer], 'voice.ogg', { type: 'audio/ogg' });
+  
+  const transcription = await openai.audio.transcriptions.create({
+    file,
+    model: 'whisper-1',
+  });
 
-    const transcript = await openai.audio.transcriptions.create({
-      model: 'whisper-1',
-      file: audioFile,
-    });
-
-    return transcript.text;
-  } catch (error) {
-    console.error('Whisper transcription error:', error);
-    throw new Error('Failed to transcribe voice note');
-  }
+  return transcription.text;
 }
 
-export async function generateFromUrl(url: string, style: PostStyle): Promise<string> {
-  try {
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error('Failed to fetch URL content');
-    }
-    
-    const text = await response.text();
-    const cleanedText = text.replace(/<[^>]*>/g, '').substring(0, 2000);
-    
-    return generatePost(cleanedText, style);
-  } catch (error) {
-    console.error('URL fetch error:', error);
-    throw new Error('Failed to generate post from URL');
-  }
+export async function generateFromUrl(url: string, style: string): Promise<string> {
+  const systemPrompt = stylePrompts[style] || stylePrompts.professional;
+  
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: `Create a social media post based on this URL: ${url}` },
+  ];
+
+  const completion = await openai.chat.completions.create({
+    model: 'gpt-4-turbo-preview',
+    messages,
+    max_tokens: 500,
+    temperature: 0.7,
+  });
+
+  return completion.choices[0].message.content || 'Failed to generate post';
 }

@@ -1,353 +1,221 @@
-import { Bot, Context, InlineQuery } from 'grammy';
-import { createBot, sendMessage, createStyleKeyboard, createUpgradeKeyboard, createWelcomeKeyboard, sendInvoice, answerPreCheckoutQuery } from './services/telegram';
-import { getUserByTelegramId, createUser, checkRateLimit, createDraft, getDraftById, updateDraft, logAnalytics, updateUserTier, createPayment, updatePaymentStatus } from './services/database';
-import { generatePost, transcribeVoice, PostStyle } from './services/openai';
-import dotenv from 'dotenv';
-
-dotenv.config();
+import { Bot, Context, session } from 'grammy';
+import { conversations, createConversation } from '@grammyjs/conversations';
+import { createBot, sendInvoice, answerPreCheckoutQuery, editMessageText, sendMessage, createStyleKeyboard, createActionKeyboard, createUpgradeKeyboard } from './services/telegram';
+import { getOrCreateUser, canTransform, incrementTransforms, upgradeToPro, createDraft, getDraftById, updateDraft, deleteDraft, getBrandVoicesByUserId, incrementReferralCount } from './services/database';
+import { generatePost, transcribeVoice } from './services/openai';
+import { generateToken } from './services/auth';
 
 const bot = createBot();
-const MINI_APP_URL = process.env.MINI_APP_URL || 'https://example.com';
 
-interface BotContext extends Context {
-  userStyle?: PostStyle;
-  userDraftId?: number;
-}
+bot.use(session({ initial: () => ({}) }));
 
-// Start command
-bot.command('start', async (ctx: BotContext) => {
-  const telegramId = ctx.from?.id;
-  if (!telegramId) return;
-
-  let user = await getUserByTelegramId(telegramId);
-  if (!user) {
-    user = await createUser(telegramId, ctx.from?.username);
-  }
-
-  const welcomeMessage = `
-🚀 <b>Welcome to PostPilot!</b>
-
-Transform your ideas into viral Telegram posts instantly.
-
-✨ <b>Features:</b>
-• Forward any message → get 3 style options
-• Voice notes → auto-transcribe & generate
-• 10 free transforms/day
-• Pro: Unlimited + analytics
-
-<b>Get started:</b>
-1. Forward a message to me
-2. Choose your style (Professional, Viral, Funny)
-3. Get your ready-to-publish post!
-
-Click below to open your dashboard 👇
-  `;
-
-  await sendMessage(bot, telegramId, welcomeMessage, createWelcomeKeyboard());
-  await logAnalytics(user.id, 'transform', { action: 'start' });
-});
-
-// Handle forwarded messages
-bot.on('message:forward_origin', async (ctx: BotContext) => {
-  const telegramId = ctx.from?.id;
-  if (!telegramId) return;
-
-  let user = await getUserByTelegramId(telegramId);
-  if (!user) {
-    user = await createUser(telegramId, ctx.from?.username);
-  }
-
-  const rateLimit = await checkRateLimit(user.id);
-  if (!rateLimit.allowed) {
-    await sendMessage(bot, telegramId, '⚠️ <b>Daily limit reached!</b>\n\nUpgrade to Pro for unlimited transforms.', createUpgradeKeyboard());
-    return;
-  }
-
-  const messageText = ctx.message?.text || ctx.message?.caption || '';
-  if (!messageText) {
-    await sendMessage(bot, telegramId, 'Please forward a message with text content.');
-    return;
-  }
-
-  ctx.userDraftId = await createDraft(user.id, messageText, 'forwarded', 'professional', '');
+bot.command('start', async (ctx) => {
+  const user = await getOrCreateUser(ctx.from!.id, ctx.from!.username);
+  const token = generateToken(user.id);
   
-  const styleMessage = `
-📝 <b>Choose your style:</b>
-
-${messageText.substring(0, 100)}${messageText.length > 100 ? '...' : ''}
-  `;
-
-  await sendMessage(bot, telegramId, styleMessage, {
-    inline_keyboard: [
-      [
-        { text: '👔 Professional', callback_data: 'style_professional' },
-        { text: '🔥 Viral', callback_data: 'style_viral' },
-      ],
-      [
-        { text: '😄 Funny', callback_data: 'style_funny' },
-        { text: '💰 Sales', callback_data: 'style_sales' },
-      ],
-      [
-        { text: '📚 Educational', callback_data: 'style_educational' },
-      ],
-    ],
-  });
-
-  await logAnalytics(user.id, 'transform', { action: 'forward_received' });
+  const miniAppUrl = `${process.env.MINI_APP_URL}?token=${token}`;
+  
+  await ctx.reply(
+    `👋 Welcome to PostPilot!\n\nTransform your messages into viral posts with AI.\n\n📊 <b>Your Stats:</b>\n• Tier: ${user.tier === 'pro' ? '⭐ Pro' : 'Free'}\n• Transforms today: ${user.transforms_today}/10\n\n🚀 <a href="${miniAppUrl}">Open Dashboard</a>`,
+    { parse_mode: 'HTML', disable_web_page_preview: true }
+  );
 });
 
-// Handle voice messages
-bot.on('message:voice', async (ctx: BotContext) => {
-  const telegramId = ctx.from?.id;
-  if (!telegramId) return;
-
-  let user = await getUserByTelegramId(telegramId);
-  if (!user) {
-    user = await createUser(telegramId, ctx.from?.username);
-  }
-
-  const rateLimit = await checkRateLimit(user.id);
-  if (!rateLimit.allowed) {
-    await sendMessage(bot, telegramId, '⚠️ <b>Daily limit reached!</b>\n\nUpgrade to Pro for unlimited transforms.', createUpgradeKeyboard());
-    return;
-  }
-
-  const voiceFile = ctx.message?.voice;
-  if (!voiceFile) return;
-
-  await sendMessage(bot, telegramId, '🎤 Transcribing your voice note...');
-
-  try {
-    const transcript = await transcribeVoice(voiceFile.file_id, process.env.TELEGRAM_BOT_TOKEN || '');
-    ctx.userDraftId = await createDraft(user.id, transcript, 'voice', 'professional', '');
-    
-    const styleMessage = `📝 <b>Transcript:</b>\n\n${transcript.substring(0, 200)}...\n\nChoose your style:`;
-
-    await sendMessage(bot, telegramId, styleMessage, {
-      inline_keyboard: [
-        [
-          { text: '👔 Professional', callback_data: 'style_professional' },
-          { text: '🔥 Viral', callback_data: 'style_viral' },
-        ],
-        [
-          { text: '😄 Funny', callback_data: 'style_funny' },
-          { text: '💰 Sales', callback_data: 'style_sales' },
-        ],
-        [
-          { text: '📚 Educational', callback_data: 'style_educational' },
-        ],
-      ],
+bot.on('message:forward_origin', async (ctx) => {
+  const user = await getOrCreateUser(ctx.from!.id, ctx.from!.username);
+  
+  if (!(await canTransform(user))) {
+    await ctx.reply('⚠️ Daily limit reached! Upgrade to Pro for unlimited transforms.', {
+      reply_markup: createUpgradeKeyboard(),
     });
-
-    await logAnalytics(user.id, 'transform', { action: 'voice_transcribed' });
-  } catch (error) {
-    await sendMessage(bot, telegramId, '❌ Failed to transcribe voice note. Please try again.');
+    return;
   }
+
+  const inputText = ctx.message.text || ctx.message.caption || '';
+  if (!inputText) {
+    await ctx.reply('Please forward a message with text content.');
+    return;
+  }
+
+  const draft = await createDraft(user.id, inputText, 'forward', 'pending', '');
+  ctx.session.currentDraftId = draft.id;
+  ctx.session.inputText = inputText;
+
+  await ctx.reply('✨ Choose a style for your post:', {
+    reply_markup: createStyleKeyboard(draft.id),
+  });
 });
 
-// Handle text messages (URLs or ideas)
-bot.on('message:text', async (ctx: BotContext) => {
-  const telegramId = ctx.from?.id;
-  if (!telegramId) return;
-
-  const text = ctx.message?.text || '';
+bot.on('message:voice', async (ctx) => {
+  const user = await getOrCreateUser(ctx.from!.id, ctx.from!.username);
   
-  // Check if it's a URL
-  if (text.match(/^https?:\/\//i)) {
-    let user = await getUserByTelegramId(telegramId);
-    if (!user) {
-      user = await createUser(telegramId, ctx.from?.username);
-    }
+  if (!(await canTransform(user))) {
+    await ctx.reply('⚠️ Daily limit reached! Upgrade to Pro for unlimited transforms.', {
+      reply_markup: createUpgradeKeyboard(),
+    });
+    return;
+  }
 
-    const rateLimit = await checkRateLimit(user.id);
-    if (!rateLimit.allowed) {
-      await sendMessage(bot, telegramId, '⚠️ <b>Daily limit reached!</b>\n\nUpgrade to Pro for unlimited transforms.', createUpgradeKeyboard());
+  const file = await ctx.api.getFile(ctx.message.voice.file_id);
+  const fileUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+  
+  const response = await fetch(fileUrl);
+  const audioBuffer = Buffer.from(await response.arrayBuffer());
+  
+  const transcription = await transcribeVoice(audioBuffer);
+  
+  const draft = await createDraft(user.id, transcription, 'voice', 'pending', '');
+  ctx.session.currentDraftId = draft.id;
+  ctx.session.inputText = transcription;
+
+  await ctx.reply('✨ Choose a style for your post:', {
+    reply_markup: createStyleKeyboard(draft.id),
+  });
+});
+
+bot.on('message:text', async (ctx) => {
+  const text = ctx.message.text;
+  
+  if (text.startsWith('http')) {
+    const user = await getOrCreateUser(ctx.from!.id, ctx.from!.username);
+    
+    if (!(await canTransform(user))) {
+      await ctx.reply('⚠️ Daily limit reached! Upgrade to Pro for unlimited transforms.', {
+        reply_markup: createUpgradeKeyboard(),
+      });
       return;
     }
 
-    await sendMessage(bot, telegramId, '🔗 Fetching content from URL...');
-    
-    try {
-      const post = await generatePost(text, 'professional');
-      ctx.userDraftId = await createDraft(user.id, text, 'link', 'professional', post);
-      
-      await sendMessage(bot, telegramId, `✨ <b>Generated Post:</b>\n\n${post}`, createStyleKeyboard(ctx.userDraftId));
-      await logAnalytics(user.id, 'transform', { action: 'url_processed' });
-    } catch (error) {
-      await sendMessage(bot, telegramId, '❌ Failed to process URL. Please try again.');
-    }
+    const draft = await createDraft(user.id, text, 'url', 'pending', '');
+    ctx.session.currentDraftId = draft.id;
+    ctx.session.inputText = text;
+
+    await ctx.reply('✨ Choose a style for your post:', {
+      reply_markup: createStyleKeyboard(draft.id),
+    });
   }
 });
 
-// Handle style selection
-bot.callbackQuery(/style_(.+)/, async (ctx: BotContext) => {
-  const style = ctx.match![1] as PostStyle;
-  const telegramId = ctx.from?.id;
-  if (!telegramId) return;
+bot.callbackQuery(/style_(\d+)_(.+)/, async (ctx) => {
+  const draftId = parseInt(ctx.match[1]);
+  const style = ctx.match[2];
+  const user = await getOrCreateUser(ctx.from!.id, ctx.from!.username);
+  const draft = await getDraftById(draftId, user.id);
 
-  const user = await getUserByTelegramId(telegramId);
-  if (!user) return;
+  if (!draft) {
+    await ctx.answerCallbackQuery('Draft not found');
+    return;
+  }
 
-  const draft = await getDraftById(ctx.userDraftId || 0);
-  if (!draft) return;
+  await ctx.answerCallbackQuery('Generating...');
+  
+  const brandVoices = await getBrandVoicesByUserId(user.id);
+  const examples = brandVoices.length > 0 ? brandVoices[0].examples : undefined;
+  
+  const generatedPost = await generatePost(ctx.session.inputText || draft.input_text || '', style, examples);
+  
+  await updateDraft(draftId, user.id, { generated_post: generatedPost, style });
+  await incrementTransforms(user.id);
 
+  await editMessageText(ctx, draft.id, `📝 <b>${style.charAt(0).toUpperCase() + style.slice(1)} Style:</b>\n\n${generatedPost}`, createActionKeyboard(draftId));
+});
+
+bot.callbackQuery(/copy_(\d+)/, async (ctx) => {
+  const draftId = parseInt(ctx.match[1]);
+  const user = await getOrCreateUser(ctx.from!.id, ctx.from!.username);
+  const draft = await getDraftById(draftId, user.id);
+
+  if (!draft) {
+    await ctx.answerCallbackQuery('Draft not found');
+    return;
+  }
+
+  await ctx.answerCallbackQuery('Copied!');
+  await ctx.copyMessage(ctx.chat!.id, draft.generated_post);
+});
+
+bot.callbackQuery(/save_(\d+)/, async (ctx) => {
+  const draftId = parseInt(ctx.match[1]);
+  await ctx.answerCallbackQuery('Saved to dashboard!');
+});
+
+bot.callbackQuery(/regenerate_(\d+)/, async (ctx) => {
+  const draftId = parseInt(ctx.match[1]);
+  const user = await getOrCreateUser(ctx.from!.id, ctx.from!.username);
+  const draft = await getDraftById(draftId, user.id);
+
+  if (!draft) {
+    await ctx.answerCallbackQuery('Draft not found');
+    return;
+  }
+
+  if (!(await canTransform(user))) {
+    await ctx.answerCallbackQuery('Daily limit reached');
+    return;
+  }
+
+  await ctx.answerCallbackQuery('Regenerating...');
+  
+  const generatedPost = await generatePost(ctx.session.inputText || draft.input_text || '', draft.style);
+  await updateDraft(draftId, user.id, { generated_post: generatedPost });
+  await incrementTransforms(user.id);
+
+  await editMessageText(ctx, draft.id, `📝 <b>${draft.style.charAt(0).toUpperCase() + draft.style.slice(1)} Style:</b>\n\n${generatedPost}`, createActionKeyboard(draftId));
+});
+
+bot.callbackQuery(/share_(\d+)/, async (ctx) => {
+  const draftId = parseInt(ctx.match[1]);
+  const user = await getOrCreateUser(ctx.from!.id, ctx.from!.username);
+  const draft = await getDraftById(draftId, user.id);
+
+  if (!draft) {
+    await ctx.answerCallbackQuery('Draft not found');
+    return;
+  }
+
+  await ctx.answerCallbackQuery('Use @PostPilotBot in any chat to share this draft');
+});
+
+bot.callbackQuery('upgrade_pro', async (ctx) => {
   await ctx.answerCallbackQuery();
-  await sendMessage(bot, telegramId, '✨ Generating your post...');
-
-  try {
-    const generatedPost = await generatePost(draft.input_text || '', style);
-    await updateDraft(draft.id, { generated_post: generatedPost, style });
-    
-    await sendMessage(bot, telegramId, `✨ <b>Generated Post (${style}):</b>\n\n${generatedPost}`, createStyleKeyboard(draft.id));
-    await logAnalytics(user.id, 'transform', { action: 'post_generated', style });
-  } catch (error) {
-    await sendMessage(bot, telegramId, '❌ Failed to generate post. Please try again.');
-  }
+  await sendInvoice(ctx.bot, ctx.chat!.id, 'PostPilot Pro', 'Unlimited transforms and premium features', 500, 'XTR');
 });
 
-// Handle copy button
-bot.callbackQuery(/copy_(\d+)/, async (ctx: BotContext) => {
-  const draftId = parseInt(ctx.match![1]);
-  const draft = await getDraftById(draftId);
-  
-  if (draft) {
-    await ctx.answerCallbackQuery({ text: '✅ Copied to clipboard!' });
-    await logAnalytics(draft.user_id, 'draft_saved', { action: 'copy' });
-  }
+bot.on('pre_checkout_query', async (ctx) => {
+  await answerPreCheckoutQuery(ctx.bot, ctx.id);
 });
 
-// Handle save button is handled in the API
-bot.callbackQuery(/save_(\d+)/, async (ctx: BotContext) => {
-  await ctx.answerCallbackQuery({ text: '✅ Draft saved! Open dashboard to view.' });
+bot.on('message:successful_payment', async (ctx) => {
+  const user = await getOrCreateUser(ctx.from!.id, ctx.from!.username);
+  await upgradeToPro(user.id);
+  await ctx.reply('🎉 Upgrade successful! You now have unlimited transforms.');
 });
 
-// Handle regenerate button
-bot.callbackQuery(/regenerate_(\d+)/, async (ctx: BotContext) => {
-  const draftId = parseInt(ctx.match![1]);
-  const draft = await getDraftById(draftId);
-  const telegramId = ctx.from?.id;
-  
-  if (draft && telegramId) {
-    const user = await getUserByTelegramId(telegramId);
-    if (!user) return;
-
-    const rateLimit = await checkRateLimit(user.id);
-    if (!rateLimit.allowed) {
-      await sendMessage(bot, telegramId, '⚠️ <b>Daily limit reached!</b>\n\nUpgrade to Pro for unlimited transforms.', createUpgradeKeyboard());
-      return;
-    }
-
-    await ctx.answerCallbackQuery();
-    await sendMessage(bot, telegramId, '✨ Regenerating...');
-
-    try {
-      const newPost = await generatePost(draft.input_text || '', draft.style as PostStyle);
-      await updateDraft(draft.id, { generated_post: newPost });
-      
-      await sendMessage(bot, telegramId, `✨ <b>Regenerated Post:</b>\n\n${newPost}`, createStyleKeyboard(draft.id));
-      await logAnalytics(user.id, 'transform', { action: 'regenerate' });
-    } catch (error) {
-      await sendMessage(bot, telegramId, '❌ Failed to regenerate. Please try again.');
-    }
-  }
-});
-
-// Handle share button
-bot.callbackQuery(/share_(\d+)/, async (ctx: BotContext) => {
-  const draftId = parseInt(ctx.match![1]);
-  const draft = await getDraftById(draftId);
-  
-  if (draft) {
-    await ctx.answerCallbackQuery({ text: '✅ Use @PostPilotBot in any chat to share!' });
-    await logAnalytics(draft.user_id, 'shared', { draftId });
-  }
-});
-
-// Inline mode
-bot.inlineQuery(async (ctx: BotContext) => {
-  const query = ctx.inlineQuery?.query || '';
-  const telegramId = ctx.from?.id;
-  if (!telegramId) return;
-
-  const user = await getUserByTelegramId(telegramId);
-  if (!user) return;
+bot.inlineQuery(/.*/, async (ctx) => {
+  const query = ctx.inlineQuery.query;
+  const user = await getOrCreateUser(ctx.from!.id, ctx.from!.username);
 
   if (!query) {
-    return ctx.answerInlineQuery([]);
+    await ctx.answerInlineQuery([]);
+    return;
   }
 
-  const results = [
+  const draft = await createDraft(user.id, query, 'inline', 'pending', '');
+  const generatedPost = await generatePost(query, 'viral');
+  await updateDraft(draft.id, user.id, { generated_post: generatedPost, style: 'viral' });
+
+  await ctx.answerInlineQuery([
     {
       type: 'article',
-      id: '1',
-      title: '📝 Professional Post',
+      id: draft.id.toString(),
+      title: 'Viral Post',
+      description: generatedPost.substring(0, 100),
       input_message_content: {
-        message_text: `📝 <b>Professional Draft:</b>\n\n${query.substring(0, 100)}...\n\n<i>Generated by PostPilot</i>`,
+        message_text: generatedPost,
         parse_mode: 'HTML',
       },
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '📲 Open in PostPilot', web_app: { url: MINI_APP_URL } }],
-        ],
-      },
     },
-    {
-      type: 'article',
-      id: '2',
-      title: '🔥 Viral Post',
-      input_message_content: {
-        message_text: `🔥 <b>Viral Draft:</b>\n\n${query.substring(0, 100)}...\n\n<i>Generated by PostPilot</i>`,
-        parse_mode: 'HTML',
-      },
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '📲 Open in PostPilot', web_app: { url: MINI_APP_URL } }],
-        ],
-      },
-    },
-    {
-      type: 'article',
-      id: '3',
-      title: '😄 Funny Post',
-      input_message_content: {
-        message_text: `😄 <b>Funny Draft:</b>\n\n${query.substring(0, 100)}...\n\n<i>Generated by PostPilot</i>`,
-        parse_mode: 'HTML',
-      },
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '📲 Open in PostPilot', web_app: { url: MINI_APP_URL } }],
-        ],
-      },
-    },
-  ];
-
-  await ctx.answerInlineQuery(results, { cache_time: 0 });
-});
-
-// Pre-checkout query
-bot.on('pre_checkout_query', async (ctx: BotContext) => {
-  await answerPreCheckoutQuery(bot, ctx.id, true);
-});
-
-// Successful payment
-bot.on('message:successful_payment', async (ctx: BotContext) => {
-  const telegramId = ctx.from?.id;
-  if (!telegramId) return;
-
-  const user = await getUserByTelegramId(telegramId);
-  if (!user) return;
-
-  const payment = ctx.message?.successful_payment;
-  if (!payment) return;
-
-  const subscriptionEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-  
-  await updateUserTier(user.id, 'pro', subscriptionEnd);
-  await createPayment(user.id, payment.total_amount, payment.telegram_payment_charge_id);
-  await updatePaymentStatus(parseInt(payment.telegram_payment_charge_id), 'completed');
-  
-  await sendMessage(bot, telegramId, '✅ <b>Welcome to PostPilot Pro!</b>\n\nUnlimited transforms unlocked. Enjoy!');
-  await logAnalytics(user.id, 'transform', { action: 'upgrade_pro' });
+  ]);
 });
 
 export default bot;

@@ -9,7 +9,7 @@
     "start": "node dist/main.js"
   },
   "dependencies": {
-    "@hono/node-server": "^4.12.31",
+    "@hono/node-server": "^1.19.14",
     "grammy": "^1.19.2",
     "hono": "^4.0.0",
     "openai": "^4.24.1",

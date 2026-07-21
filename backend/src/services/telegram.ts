@@ -1,15 +1,10 @@
-import { Bot, GrammyError, HttpError } from 'grammy';
+import { Bot, InlineKeyboard } from 'grammy';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
-export function createBot(): Bot {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  if (!token) {
-    throw new Error('TELEGRAM_BOT_TOKEN is not set');
-  }
-  
-  return new Bot(token);
+export function createBot() {
+  return new Bot(process.env.TELEGRAM_BOT_TOKEN || '');
 }
 
 export async function sendInvoice(
@@ -17,26 +12,19 @@ export async function sendInvoice(
   chatId: number,
   title: string,
   description: string,
-  payload: string,
-  prices: Array<{ label: string; amount: number }>
-): Promise<void> {
-  await bot.api.sendInvoice(chatId, {
-    title,
-    description,
-    payload,
-    currency: 'XTR',
-    prices,
-    provider_token: '',
-  });
+  amount: number,
+  currency: string = 'XTR'
+) {
+  await bot.api.sendInvoice(chatId, title, description, 'payload', '', currency, [
+    {
+      label: 'Pro Subscription',
+      amount: amount,
+    },
+  ]);
 }
 
-export async function answerPreCheckoutQuery(
-  bot: Bot,
-  preCheckoutQueryId: string,
-  ok: boolean,
-  errorMessage?: string
-): Promise<void> {
-  await bot.api.answerPreCheckoutQuery(preCheckoutQueryId, ok, errorMessage);
+export async function answerPreCheckoutQuery(bot: Bot, preCheckoutQueryId: string) {
+  await bot.api.answerPreCheckoutQuery(preCheckoutQueryId, true);
 }
 
 export async function editMessageText(
@@ -44,11 +32,10 @@ export async function editMessageText(
   chatId: number,
   messageId: number,
   text: string,
-  replyMarkup?: any
-): Promise<void> {
+  keyboard?: InlineKeyboard
+) {
   await bot.api.editMessageText(chatId, messageId, text, {
-    parse_mode: 'HTML',
-    reply_markup: replyMarkup,
+    reply_markup: keyboard,
   });
 }
 
@@ -56,52 +43,44 @@ export async function sendMessage(
   bot: Bot,
   chatId: number,
   text: string,
-  replyMarkup?: any
-): Promise<void> {
+  keyboard?: InlineKeyboard
+) {
   await bot.api.sendMessage(chatId, text, {
+    reply_markup: keyboard,
     parse_mode: 'HTML',
-    reply_markup: replyMarkup,
   });
 }
 
-export function createStyleKeyboard(draftId: number): any {
-  return {
-    inline_keyboard: [
-      [
-        { text: '📋 Copy', callback_data: `copy_${draftId}` },
-        { text: '💾 Save', callback_data: `save_${draftId}` },
-      ],
-      [
-        { text: '🔄 Regenerate', callback_data: `regenerate_${draftId}` },
-        { text: '📤 Share', callback_data: `share_${draftId}` },
-      ],
-    ],
-  };
+export function createStyleKeyboard(draftId: number): InlineKeyboard {
+  return new InlineKeyboard()
+    .text('💼 Professional', `style_${draftId}_professional`)
+    .row()
+    .text('🔥 Viral', `style_${draftId}_viral`)
+    .text('😄 Funny', `style_${draftId}_funny`)
+    .row()
+    .text('💰 Sales', `style_${draftId}_sales`)
+    .text('📚 Educational', `style_${draftId}_educational`);
 }
 
-export function createUpgradeKeyboard(): any {
-  return {
-    inline_keyboard: [
-      [
-        {
-          text: '⭐ Upgrade to Pro - 500 Stars',
-          pay: true,
-        },
-      ],
-    ],
-  };
+export function createActionKeyboard(draftId: number): InlineKeyboard {
+  return new InlineKeyboard()
+    .text('📋 Copy', `copy_${draftId}`)
+    .text('💾 Save', `save_${draftId}`)
+    .row()
+    .text('🔄 Regenerate', `regenerate_${draftId}`)
+    .text('📤 Share', `share_${draftId}`);
 }
 
-export function createWelcomeKeyboard(): any {
-  const miniAppUrl = process.env.MINI_APP_URL || 'https://example.com';
-  return {
-    inline_keyboard: [
-      [
-        {
-          text: '🚀 Open Dashboard',
-          web_app: { url: miniAppUrl },
-        },
-      ],
-    ],
-  };
+export function createBrandVoiceKeyboard(draftId: number, voices: string[]): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+  voices.forEach((voice, index) => {
+    if (index % 2 === 0) keyboard.row();
+    keyboard.text(voice, `voice_${draftId}_${voice}`);
+  });
+  keyboard.row().text('✏️ Custom', `custom_${draftId}`);
+  return keyboard;
+}
+
+export function createUpgradeKeyboard(): InlineKeyboard {
+  return new InlineKeyboard().text('⭐ Upgrade to Pro (500 Stars)', 'upgrade_pro');
 }

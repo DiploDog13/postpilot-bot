@@ -4,53 +4,49 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 
-export interface TelegramUser {
-  id: number;
-  first_name?: string;
-  last_name?: string;
-  username?: string;
-  language_code?: string;
-}
-
-export function validateTelegramInitData(initData: string): TelegramUser | null {
+export function validateTelegramInitData(initData: string): boolean {
   try {
     const params = new URLSearchParams(initData);
     const hash = params.get('hash');
+    if (!hash) return false;
+
     params.delete('hash');
-    
     const dataCheckString = Array.from(params.entries())
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([key, value]) => `${key}=${value}`)
       .join('\n');
-    
-    // In production, verify the hash using HMAC-SHA256 with BOT_TOKEN
-    // For MVP, we'll skip strict verification
-    const userStr = params.get('user');
-    if (!userStr) return null;
-    
-    const user = JSON.parse(decodeURIComponent(userStr));
-    return user as TelegramUser;
+
+    const secretKey = crypto
+      .createHmac('sha256', 'WebAppData')
+      .update(process.env.TELEGRAM_BOT_TOKEN || '')
+      .digest();
+
+    const computedHash = crypto
+      .createHmac('sha256', secretKey)
+      .update(dataCheckString)
+      .digest('hex');
+
+    return computedHash === hash;
   } catch (error) {
-    console.error('Failed to validate Telegram init data:', error);
-    return null;
+    console.error('Telegram init data validation failed:', error);
+    return false;
   }
 }
 
 export function generateToken(userId: number): string {
-  return jwt.sign({ userId }, JWT_SECRET, { expiresIn: '30d' });
+  return jwt.sign({ userId }, JWT_SECRET, { expiresIn: '7d' });
 }
 
 export function verifyToken(token: string): { userId: number } | null {
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { userId: number };
-    return decoded;
+    return jwt.verify(token, JWT_SECRET) as { userId: number };
   } catch (error) {
     return null;
   }
 }
 
-export function generateReferralCode(userId: number): string {
-  return crypto.randomBytes(8).toString('hex');
+export function generateReferralCode(): string {
+  return Math.random().toString(36).substring(2, 12);
 }
