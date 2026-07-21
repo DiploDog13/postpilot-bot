@@ -1,24 +1,17 @@
-FROM node:20-alpine AS builder
+FROM node:18-alpine
 
 WORKDIR /app
 
 COPY package*.json ./
+COPY tsconfig.json ./
+
 RUN npm install
 
 COPY . .
-RUN npm run build
 
-FROM node:20-alpine AS runner
-
-WORKDIR /app
-
-ENV NODE_ENV production
-
-COPY package*.json ./
-RUN npm install --omit=dev
-
-COPY --from=builder /app/dist ./dist
+# Вместо npm run build используем npx
+RUN npx tsc
 
 EXPOSE 3000
 
-CMD ["node", "dist/main.js"]
+CMD ["node", "dist/index.js"]
