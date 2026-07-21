@@ -23,8 +23,13 @@ import {
 } from "./services/database";
 import { generatePost } from "./services/openai";
 
-// Создаем экземпляр приложения Hono
-const app = new Hono();
+// Создаем экземпляр приложения Hono с типизированным контекстом
+type Variables = {
+  userId: number;
+  telegramId: number;
+};
+
+const app = new Hono<{ Variables: Variables }>();
 
 // Настройка CORS
 app.use("*", cors({
@@ -52,6 +57,7 @@ app.use("/api/*", async (c, next) => {
   const token = authHeader.split(" ")[1];
   try {
     const decoded = verify(token, process.env.JWT_SECRET || "default_secret");
+    // Используем c.set с правильными типами
     c.set("userId", (decoded as any).userId);
     c.set("telegramId", (decoded as any).telegramId);
     await next();
@@ -424,7 +430,6 @@ app.get("/api/brand-voices", async (c) => {
 
     const voices = await getBrandVoicesByUser(userId);
     
-    // Теперь voices содержит поле examples
     return c.json({
       success: true,
       voices: voices,
