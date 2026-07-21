@@ -3,7 +3,8 @@
 import { Bot, Context, SessionFlavor, session, InlineKeyboard } from "grammy";
 import { 
   getUserByTelegramId, 
-  createUser, 
+  createUser,
+  updateUserSubscription,
   saveDraft, 
   updateDraft, 
   getDraftsByUser,
