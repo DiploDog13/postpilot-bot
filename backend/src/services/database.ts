@@ -227,12 +227,13 @@ export async function getDraftById(id: number, userId: number): Promise<Draft | 
 export async function updateDraft(id: number, userId: number, updates: Partial<Draft>): Promise<Draft> {
   const result = await pool.query(
     `UPDATE drafts 
-     SET generated_post = COALESCE($1, generated_post),
-         is_published = COALESCE($2, is_published),
+     SET style = COALESCE($1, style),
+         generated_post = COALESCE($2, generated_post),
+         is_published = COALESCE($3, is_published),
          updated_at = NOW()
-     WHERE id = $3 AND user_id = $4
+     WHERE id = $4 AND user_id = $5
      RETURNING *`,
-    [updates.generated_post, updates.is_published, id, userId]
+    [updates.style, updates.generated_post, updates.is_published, id, userId]
   );
   return result.rows[0];
 }
