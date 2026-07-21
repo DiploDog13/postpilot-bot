@@ -6,20 +6,17 @@ WORKDIR /app
 # Копируем package файлы
 COPY package*.json ./
 
-# Устанавливаем зависимости с флагом --legacy-peer-deps
+# Устанавливаем зависимости
 RUN npm install --legacy-peer-deps
 
 # Копируем исходный код
 COPY . .
 
-# Даем права на выполнение для node_modules/.bin
-RUN chmod -R +x node_modules/.bin
+# Используем полный путь к TypeScript компилятору
+RUN ./node_modules/.bin/tsc
 
-# Собираем TypeScript с использованием npx
-RUN npx tsc
-
-# Или используем полный путь к tsc
-# RUN node node_modules/typescript/bin/tsc
+# Или используем node для запуска
+# RUN node ./node_modules/typescript/bin/tsc
 
 # Открываем порт
 EXPOSE 3000
