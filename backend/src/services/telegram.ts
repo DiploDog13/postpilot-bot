@@ -1,10 +1,12 @@
+// backend/src/services/telegram.ts
+
 import { Context } from "grammy";
 import { LabeledPrice } from "grammy/types";
 import { createReadStream } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import axios from "axios";
 import * as fs from "fs";
+import fetch from "node-fetch";
 
 // Скачивание файла из Telegram
 export async function downloadFile(ctx: Context, fileId: string): Promise<string> {
@@ -21,22 +23,18 @@ export async function downloadFile(ctx: Context, fileId: string): Promise<string
     const botToken = process.env.TELEGRAM_BOT_TOKEN!;
     const fileUrl = `https://api.telegram.org/file/bot${botToken}/${filePath}`;
     
-    // Скачиваем файл
-    const response = await axios({
-      method: "GET",
-      url: fileUrl,
-      responseType: "stream",
-    });
+    // Скачиваем файл с использованием fetch
+    const response = await fetch(fileUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to download file: ${response.statusText}`);
+    }
     
     // Сохраняем во временную папку
     const tempFile = join(tmpdir(), `voice_${Date.now()}.ogg`);
-    const writer = fs.createWriteStream(tempFile);
-    response.data.pipe(writer);
+    const buffer = await response.buffer();
+    fs.writeFileSync(tempFile, buffer);
     
-    return new Promise((resolve, reject) => {
-      writer.on("finish", () => resolve(tempFile));
-      writer.on("error", reject);
-    });
+    return tempFile;
   } catch (error) {
     console.error("Download file error:", error);
     throw error;
@@ -52,12 +50,15 @@ export async function sendVoiceTranscription(ctx: Context, fileId: string): Prom
     // Здесь должна быть интеграция с OpenAI Whisper API
     // Для демонстрации возвращаем тестовый текст
     // В реальном проекте используйте:
-    // const transcription = await openai.audio.transcriptions.create({ ... });
+    // const transcription = await openai.audio.transcriptions.create({ 
+    //   file: fs.createReadStream(filePath),
+    //   model: "whisper-1"
+    // });
     
     // Удаляем временный файл
     fs.unlinkSync(filePath);
     
-    return "🎤 Распознанное голосовое сообщение: Привет! Это пример транскрипции твоего голосового сообщения.";
+    return "🎤 Распознанное голосовое сообщение: Привет! Это пример транскрипции твоего голосового сообщения. Здесь мог быть твой текст.";
   } catch (error) {
     console.error("Transcription error:", error);
     throw error;
@@ -83,15 +84,15 @@ export async function sendPaymentInvoice(
       }
     ];
     
-    // Отправляем инвойс
+    // Отправляем инвойс с правильным типом prices
     const result = await ctx.api.sendInvoice(
       chatId,
       title,
       description,
       payload,
-      process.env.TELEGRAM_PAYMENT_PROVIDER_TOKEN || "", // Токен провайдера для Stars
+      "", // provider_token оставляем пустым для Stars
       "XTR", // Валюта для Telegram Stars
-      prices
+      prices // Передаем массив LabeledPrice[]
     );
     
     return result;
