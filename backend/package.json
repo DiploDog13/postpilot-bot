@@ -1,26 +1,39 @@
 {
   "name": "postpilot-backend",
   "version": "1.0.0",
+  "description": "PostPilot Bot Backend",
+  "main": "dist/main.js",
   "scripts": {
     "build": "tsc",
     "start": "node dist/main.js",
-    "dev": "ts-node src/main.ts"
+    "dev": "ts-node src/main.ts",
+    "watch": "ts-node --watch src/main.ts"
   },
   "dependencies": {
-    "@hono/node-server": "^1.11.1",
-    "grammy": "^1.17.0",
-    "hono": "^3.11.7",
-    "pg": "^8.11.3",
-    "dotenv": "^16.3.1",
+    "@hono/node-server": "^1.13.7",
+    "grammy": "^1.31.0",
+    "hono": "^4.6.14",
+    "pg": "^8.13.1",
+    "dotenv": "^16.4.7",
     "jsonwebtoken": "^9.0.2",
     "node-fetch": "^3.3.2",
-    "openai": "^4.20.0"
+    "openai": "^4.77.0",
+    "bcryptjs": "^2.4.3"
   },
   "devDependencies": {
-    "@types/node": "^20.10.0",
-    "@types/pg": "^8.10.9",
-    "@types/jsonwebtoken": "^9.0.5",
-    "typescript": "^5.3.0",
+    "@types/node": "^22.10.2",
+    "@types/pg": "^8.11.10",
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/bcryptjs": "^2.4.6",
+    "typescript": "^5.7.2",
     "ts-node": "^10.9.2"
-  }
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "ai",
+    "postpilot"
+  ],
+  "author": "DiploDog13",
+  "license": "MIT"
 }
