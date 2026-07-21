@@ -5,12 +5,11 @@ WORKDIR /app
 COPY package*.json ./
 COPY tsconfig.json ./
 
-RUN npm ci
+RUN npm ci --include=dev
 
 COPY . .
 
-# Обходим проблему с executable bit у tsc
-RUN node ./node_modules/typescript/bin/tsc --noEmitOnError false
+RUN node ./node_modules/typescript/bin/tsc
 
 EXPOSE 3000
 
