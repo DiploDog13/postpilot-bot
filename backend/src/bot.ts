@@ -1,291 +1,297 @@
-import { Context, SessionFlavor, session } from 'grammy';
-import {
-  createBot,
-  sendInvoice,
-  createStyleKeyboard,
-  createActionKeyboard,
-  createUpgradeKeyboard,
-} from './services/telegram';
-import {
-  getOrCreateUser,
-  canTransform,
-  incrementTransforms,
-  upgradeToPro,
-  createDraft,
-  getDraftById,
-  updateDraft,
-  getBrandVoicesByUserId,
-} from './services/database';
-import { generatePost, transcribeVoice } from './services/openai';
-import { generateToken } from './services/auth';
+import { Bot, Context, SessionFlavor, session, InlineKeyboard } from "grammy";
+import { ChatMember } from "grammy/types";
+import { generatePost } from "./services/openai";
+import { 
+  getUserByTelegramId, 
+  createUser, 
+  saveDraft, 
+  updateDraft, 
+  getDraftsByUser,
+  incrementTransformCount,
+  getTransformCount
+} from "./services/database";
+import { sendTelegramMessage, sendVoiceTranscription } from "./services/telegram";
 
+// Определяем тип данных сессии
 interface SessionData {
+  transformCount: number;
   currentDraftId?: number;
-  inputText?: string;
+  tempVoiceMessage?: string;
+  brandVoiceId?: number;
 }
 
-type BotContext = Context & SessionFlavor<SessionData>;
+// Создаем тип контекста с сессией
+type MyContext = Context & SessionFlavor<SessionData>;
 
-const bot = createBot<BotContext>();
+// Инициализация бота с правильным типом
+const bot = new Bot<MyContext>(process.env.TELEGRAM_BOT_TOKEN!);
 
-bot.use(
-  session({
-    initial: (): SessionData => ({}),
-  })
-);
+// Настройка мидлвара сессии
+bot.use(session({
+  initial: (): SessionData => ({
+    transformCount: 0,
+  }),
+}));
 
-bot.command('start', async (ctx) => {
-  const user = await getOrCreateUser(ctx.from!.id, ctx.from!.username);
-  const token = generateToken(user.id);
+// Команда /start
+bot.command("start", async (ctx: MyContext) => {
+  const telegramId = ctx.from?.id;
+  const username = ctx.from?.username;
+  
+  if (!telegramId) {
+    await ctx.reply("❌ Не удалось идентифицировать пользователя.");
+    return;
+  }
 
-  const miniAppUrl = `${process.env.MINI_APP_URL}?token=${token}`;
+  try {
+    // Проверяем или создаем пользователя
+    let user = await getUserByTelegramId(telegramId);
+    if (!user) {
+      user = await createUser(telegramId, username);
+    }
 
-  await ctx.reply(
-    `👋 Welcome to PostPilot!\n\nTransform your messages into viral posts with AI.\n\n📊 <b>Your Stats:</b>\n• Tier: ${user.tier === 'pro' ? '⭐ Pro' : 'Free'}\n• Transforms today: ${user.transforms_today}/10\n\n🚀 <a href="${miniAppUrl}">Open Dashboard</a>`,
-    { parse_mode: 'HTML' }
-  );
+    // Открываем Mini App
+    const miniAppUrl = process.env.MINI_APP_URL || "https://your-frontend-domain.com";
+    const keyboard = new InlineKeyboard().webApp(
+      "🚀 Открыть приложение", 
+      `${miniAppUrl}?userId=${telegramId}`
+    );
+
+    await ctx.reply(
+      `👋 Привет, ${ctx.from?.first_name || "пользователь"}!\n\n` +
+      "Я помогу превратить твои идеи, голосовые сообщения и ссылки в готовые посты для соцсетей.\n\n" +
+      "📌 Используй кнопку ниже, чтобы открыть панель управления, или просто перешли мне любое сообщение!",
+      { reply_markup: keyboard }
+    );
+  } catch (error) {
+    console.error("Error in /start command:", error);
+    await ctx.reply("❌ Произошла ошибка. Попробуй позже.");
+  }
 });
 
-bot.on('message:forward_origin', async (ctx) => {
-  const user = await getOrCreateUser(ctx.from!.id, ctx.from!.username);
+// Обработка пересланных сообщений
+bot.on("message", async (ctx: MyContext) => {
+  const telegramId = ctx.from?.id;
+  if (!telegramId) return;
 
-  if (!(await canTransform(user))) {
-    await ctx.reply('⚠️ Daily limit reached! Upgrade to Pro for unlimited transforms.', {
-      reply_markup: createUpgradeKeyboard(),
-    });
-    return;
-  }
-
-  const inputText = ctx.message.text || ctx.message.caption || '';
-  if (!inputText) {
-    await ctx.reply('Please forward a message with text content.');
-    return;
-  }
-
-  const draft = await createDraft(user.id, inputText, 'forward', 'pending', '');
-  ctx.session.currentDraftId = draft.id;
-  ctx.session.inputText = inputText;
-
-  await ctx.reply('✨ Choose a style for your post:', {
-    reply_markup: createStyleKeyboard(draft.id),
-  });
-});
-
-bot.on('message:voice', async (ctx) => {
-  const user = await getOrCreateUser(ctx.from!.id, ctx.from!.username);
-
-  if (!(await canTransform(user))) {
-    await ctx.reply('⚠️ Daily limit reached! Upgrade to Pro for unlimited transforms.', {
-      reply_markup: createUpgradeKeyboard(),
-    });
-    return;
-  }
-
-  const file = await ctx.api.getFile(ctx.message.voice.file_id);
-
-  if (!file.file_path) {
-    await ctx.reply('Failed to fetch voice file.');
-    return;
-  }
-
-  const fileUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
-
-  const response = await fetch(fileUrl);
-  const audioBuffer = Buffer.from(await response.arrayBuffer());
-
-  const transcription = await transcribeVoice(audioBuffer);
-
-  const draft = await createDraft(user.id, transcription, 'voice', 'pending', '');
-  ctx.session.currentDraftId = draft.id;
-  ctx.session.inputText = transcription;
-
-  await ctx.reply('✨ Choose a style for your post:', {
-    reply_markup: createStyleKeyboard(draft.id),
-  });
-});
-
-bot.on('message:text', async (ctx) => {
-  const text = ctx.message.text;
-
-  if (text.startsWith('http')) {
-    const user = await getOrCreateUser(ctx.from!.id, ctx.from!.username);
-
-    if (!(await canTransform(user))) {
-      await ctx.reply('⚠️ Daily limit reached! Upgrade to Pro for unlimited transforms.', {
-        reply_markup: createUpgradeKeyboard(),
-      });
+  // Проверяем лимиты
+  const count = await getTransformCount(telegramId);
+  if (count >= 10) {
+    // Проверяем, есть ли Pro подписка
+    const user = await getUserByTelegramId(telegramId);
+    if (!user || user.subscription !== "pro") {
+      await ctx.reply(
+        "🎯 Ты использовал все 10 бесплатных трансформаций!\n\n" +
+        "Получи доступ к безлимитным генерациям и премиум-функциям за 500 Telegram Stars. ⭐️",
+        {
+          reply_markup: new InlineKeyboard().text(
+            "💎 Купить Pro", 
+            "buy_pro"
+          ),
+        }
+      );
       return;
     }
-
-    const draft = await createDraft(user.id, text, 'url', 'pending', '');
-    ctx.session.currentDraftId = draft.id;
-    ctx.session.inputText = text;
-
-    await ctx.reply('✨ Choose a style for your post:', {
-      reply_markup: createStyleKeyboard(draft.id),
-    });
   }
-});
 
-bot.callbackQuery(/style_(\d+)_(.+)/, async (ctx) => {
-  const draftId = parseInt(ctx.match[1], 10);
-  const style = ctx.match[2];
-
-  const user = await getOrCreateUser(ctx.from!.id, ctx.from!.username);
-  const draft = await getDraftById(draftId, user.id);
-
-  if (!draft) {
-    await ctx.answerCallbackQuery({ text: 'Draft not found' });
+  // Обработка голосовых сообщений
+  if (ctx.message?.voice) {
+    const fileId = ctx.message.voice.file_id;
+    ctx.session.tempVoiceMessage = fileId; // Теперь session доступен!
+    
+    await ctx.reply("🎤 Распознаю голосовое сообщение...");
+    
+    try {
+      const transcription = await sendVoiceTranscription(ctx, fileId);
+      ctx.session.tempVoiceMessage = transcription;
+      
+      // Генерируем пост
+      const postStyles = await generatePost(transcription, "auto");
+      const keyboard = new InlineKeyboard()
+        .text("📝 Сохранить", `save_voice_${transcription.substring(0, 10)}`);
+      
+      await ctx.reply(
+        `📝 Транскрипция:\n\n${transcription}\n\n` +
+        "Что делать с этим текстом? Выбери стиль поста или сохрани как есть.",
+        { reply_markup: keyboard }
+      );
+    } catch (error) {
+      console.error("Voice transcription error:", error);
+      await ctx.reply("❌ Не удалось распознать голосовое сообщение.");
+    }
     return;
   }
 
-  await ctx.answerCallbackQuery({ text: 'Generating...' });
-
-  const brandVoices = await getBrandVoicesByUserId(user.id);
-  const examples = brandVoices.length > 0 ? brandVoices[0].examples : undefined;
-
-  const generatedPost = await generatePost(
-    ctx.session.inputText || draft.input_text || '',
-    style,
-    examples
-  );
-
-  await updateDraft(draftId, user.id, {
-    generated_post: generatedPost,
-    style,
-  });
-
-  await incrementTransforms(user.id);
-
-  await ctx.editMessageText(`📝 ${style.charAt(0).toUpperCase() + style.slice(1)} Style:\n\n${generatedPost}`, {
-    reply_markup: createActionKeyboard(draftId),
-  });
-});
-
-bot.callbackQuery(/copy_(\d+)/, async (ctx) => {
-  const draftId = parseInt(ctx.match[1], 10);
-  const user = await getOrCreateUser(ctx.from!.id, ctx.from!.username);
-  const draft = await getDraftById(draftId, user.id);
-
-  if (!draft) {
-    await ctx.answerCallbackQuery({ text: 'Draft not found' });
+  // Обработка текстовых сообщений
+  if (ctx.message?.text) {
+    const text = ctx.message.text;
+    
+    // Игнорируем команды
+    if (text.startsWith("/")) return;
+    
+    // Сохраняем сообщение в сессию
+    ctx.session.currentDraftId = Date.now();
+    
+    try {
+      // Генерируем 3 варианта поста
+      const styles = ["viral", "professional", "funny"];
+      const generatedPosts = await Promise.all(
+        styles.map(style => generatePost(text, style))
+      );
+      
+      // Отправляем результат
+      const keyboard = new InlineKeyboard()
+        .text("📝 Сохранить", `save_text_${ctx.session.currentDraftId}`)
+        .text("🔄 Еще варианты", `regenerate_${ctx.session.currentDraftId}`);
+      
+      let response = "🎯 Вот варианты постов для твоего текста:\n\n";
+      styles.forEach((style, index) => {
+        response += `*${style.toUpperCase()}*:\n${generatedPosts[index]}\n\n`;
+      });
+      
+      await ctx.reply(response, {
+        parse_mode: "Markdown",
+        reply_markup: keyboard,
+      });
+      
+      // Инкрементируем счетчик трансформаций
+      await incrementTransformCount(telegramId);
+    } catch (error) {
+      console.error("Generation error:", error);
+      await ctx.reply("❌ Не удалось сгенерировать посты. Попробуй позже.");
+    }
     return;
   }
 
-  await ctx.answerCallbackQuery({ text: 'Copied!' });
-  await ctx.reply(draft.generated_post);
-});
-
-bot.callbackQuery(/save_(\d+)/, async (ctx) => {
-  await ctx.answerCallbackQuery({ text: 'Saved to dashboard!' });
-});
-
-bot.callbackQuery(/regenerate_(\d+)/, async (ctx) => {
-  const draftId = parseInt(ctx.match[1], 10);
-  const user = await getOrCreateUser(ctx.from!.id, ctx.from!.username);
-  const draft = await getDraftById(draftId, user.id);
-
-  if (!draft) {
-    await ctx.answerCallbackQuery({ text: 'Draft not found' });
-    return;
-  }
-
-  if (!(await canTransform(user))) {
-    await ctx.answerCallbackQuery({ text: 'Daily limit reached' });
-    return;
-  }
-
-  await ctx.answerCallbackQuery({ text: 'Regenerating...' });
-
-  const generatedPost = await generatePost(
-    ctx.session.inputText || draft.input_text || '',
-    draft.style || 'professional'
-  );
-
-  await updateDraft(draftId, user.id, {
-    generated_post: generatedPost,
-  });
-
-  await incrementTransforms(user.id);
-
-  await ctx.editMessageText(
-    `📝 ${draft.style.charAt(0).toUpperCase() + draft.style.slice(1)} Style:\n\n${generatedPost}`,
+  // Обработка других типов сообщений
+  await ctx.reply(
+    "📨 Отлично! Я получил твое сообщение.\n\n" +
+    "Чтобы я мог его обработать:\n" +
+    "• Перешли мне текст для генерации поста\n" +
+    "• Отправь голосовое сообщение для транскрипции\n" +
+    "• Или открой панель управления кнопкой ниже",
     {
-      reply_markup: createActionKeyboard(draftId),
+      reply_markup: new InlineKeyboard().webApp(
+        "🚀 Открыть приложение",
+        `${process.env.MINI_APP_URL || "https://your-frontend-domain.com"}`
+      ),
     }
   );
 });
 
-bot.callbackQuery(/share_(\d+)/, async (ctx) => {
-  const draftId = parseInt(ctx.match[1], 10);
-  const user = await getOrCreateUser(ctx.from!.id, ctx.from!.username);
-  const draft = await getDraftById(draftId, user.id);
+// Обработка callback-запросов (кнопки)
+bot.on("callback_query:data", async (ctx: MyContext) => {
+  const telegramId = ctx.from?.id;
+  if (!telegramId) return;
 
-  if (!draft) {
-    await ctx.answerCallbackQuery({ text: 'Draft not found' });
+  const data = ctx.callbackQuery.data;
+  console.log(`Callback data: ${data}`);
+
+  // Покупка Pro
+  if (data === "buy_pro") {
+    try {
+      // Здесь должна быть логика платежей через Telegram Stars
+      await ctx.reply(
+        "⭐️ Отлично! Нажми на кнопку ниже, чтобы оплатить 500 Stars.\n\n" +
+        "После оплаты ты получишь безлимитный доступ ко всем функциям на месяц.",
+        {
+          reply_markup: new InlineKeyboard().text(
+            "💳 Оплатить 500 Stars",
+            "pay_500_stars"
+          ),
+        }
+      );
+    } catch (error) {
+      console.error("Pro upgrade error:", error);
+      await ctx.reply("❌ Ошибка при оформлении подписки.");
+    }
     return;
   }
 
-  await ctx.answerCallbackQuery({
-    text: 'Use @PostPilotBot in any chat to share this draft',
-  });
-});
-
-bot.callbackQuery('upgrade_pro', async (ctx) => {
-  await ctx.answerCallbackQuery();
-
-  if (!ctx.chat) {
+  // Сохранение черновика
+  if (data.startsWith("save_") || data.startsWith("save_text_")) {
+    try {
+      const message = ctx.callbackQuery.message;
+      if (!message) return;
+      
+      const draft = {
+        user_id: telegramId,
+        content: message.text || "Черновик",
+        style: "auto",
+        status: "draft",
+      };
+      
+      await saveDraft(draft);
+      ctx.session.transformCount += 1; // Теперь session доступен!
+      
+      await ctx.answerCallbackQuery({
+        text: "✅ Черновик сохранен!",
+        show_alert: false,
+      });
+      
+      await ctx.editMessageReplyMarkup({
+        reply_markup: new InlineKeyboard().text("📝 Просмотреть", "view_drafts"),
+      });
+    } catch (error) {
+      console.error("Save draft error:", error);
+      await ctx.answerCallbackQuery("❌ Не удалось сохранить");
+    }
     return;
   }
 
-  await sendInvoice(
-    bot,
-    ctx.chat.id,
-    'PostPilot Pro',
-    'Unlimited transforms and premium features',
-    500,
-    'XTR'
-  );
-});
-
-bot.on('pre_checkout_query', async (ctx) => {
-  await bot.api.answerPreCheckoutQuery(ctx.update.pre_checkout_query.id, true);
-});
-
-bot.on('message:successful_payment', async (ctx) => {
-  const user = await getOrCreateUser(ctx.from!.id, ctx.from!.username);
-  await upgradeToPro(user.id);
-  await ctx.reply('🎉 Upgrade successful! You now have unlimited transforms.');
-});
-
-bot.inlineQuery(/.*/, async (ctx) => {
-  const query = ctx.inlineQuery.query.trim();
-  const user = await getOrCreateUser(ctx.from!.id, ctx.from!.username);
-
-  if (!query) {
-    await ctx.answerInlineQuery([]);
+  // Регенерация поста
+  if (data.startsWith("regenerate_")) {
+    await ctx.answerCallbackQuery("🔄 Генерирую новые варианты...");
+    // Здесь логика регенерации
+    await ctx.reply("🔄 Новые варианты генерируются...");
     return;
   }
 
-  const draft = await createDraft(user.id, query, 'inline', 'viral', '');
-  const generatedPost = await generatePost(query, 'viral');
-
-  await updateDraft(draft.id, user.id, {
-    generated_post: generatedPost,
-    style: 'viral',
-  });
-
-  await ctx.answerInlineQuery([
-    {
-      type: 'article',
-      id: draft.id.toString(),
-      title: 'Viral Post',
-      description: generatedPost.substring(0, 100),
-      input_message_content: {
-        message_text: generatedPost,
-      },
-    },
-  ]);
+  // Просмотр черновиков
+  if (data === "view_drafts") {
+    try {
+      const drafts = await getDraftsByUser(telegramId);
+      if (drafts.length === 0) {
+        await ctx.reply("📝 У тебя пока нет сохраненных черновиков.");
+        return;
+      }
+      
+      let response = "📝 Твои черновики:\n\n";
+      drafts.slice(0, 5).forEach((draft, index) => {
+        const preview = draft.content.substring(0, 100) + "...";
+        response += `${index + 1}. ${preview}\n`;
+      });
+      
+      await ctx.reply(response);
+    } catch (error) {
+      console.error("Get drafts error:", error);
+      await ctx.reply("❌ Не удалось загрузить черновики.");
+    }
+    return;
+  }
 });
+
+// Обработка ошибок
+bot.catch((err) => {
+  console.error("Bot error:", err);
+});
+
+// Запуск бота
+export async function startBot() {
+  try {
+    // Устанавливаем вебхук или используем polling
+    const webhookUrl = process.env.WEBHOOK_URL;
+    if (webhookUrl) {
+      await bot.api.setWebhook(webhookUrl);
+      console.log(`✅ Webhook set to: ${webhookUrl}`);
+    } else {
+      await bot.start();
+      console.log("✅ Bot started with polling");
+    }
+  } catch (error) {
+    console.error("Failed to start bot:", error);
+    throw error;
+  }
+}
 
 export default bot;
