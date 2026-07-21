@@ -1,6 +1,6 @@
+// backend/src/bot.ts
+
 import { Bot, Context, SessionFlavor, session, InlineKeyboard } from "grammy";
-import { ChatMember } from "grammy/types";
-import { generatePost } from "./services/openai";
 import { 
   getUserByTelegramId, 
   createUser, 
@@ -8,9 +8,14 @@ import {
   updateDraft, 
   getDraftsByUser,
   incrementTransformCount,
-  getTransformCount
+  getTransformCount,
+  getBrandVoicesByUser,
+  createBrandVoice,
+  User,
+  Draft
 } from "./services/database";
-import { sendTelegramMessage, sendVoiceTranscription } from "./services/telegram";
+import { generatePost } from "./services/openai";
+import { sendVoiceTranscription, sendPaymentInvoice } from "./services/telegram";
 
 // Определяем тип данных сессии
 interface SessionData {
@@ -18,12 +23,13 @@ interface SessionData {
   currentDraftId?: number;
   tempVoiceMessage?: string;
   brandVoiceId?: number;
+  currentStyle?: string;
 }
 
 // Создаем тип контекста с сессией
 type MyContext = Context & SessionFlavor<SessionData>;
 
-// Инициализация бота с правильным типом
+// Инициализация бота
 const bot = new Bot<MyContext>(process.env.TELEGRAM_BOT_TOKEN!);
 
 // Настройка мидлвара сессии
@@ -97,7 +103,7 @@ bot.on("message", async (ctx: MyContext) => {
   // Обработка голосовых сообщений
   if (ctx.message?.voice) {
     const fileId = ctx.message.voice.file_id;
-    ctx.session.tempVoiceMessage = fileId; // Теперь session доступен!
+    ctx.session.tempVoiceMessage = fileId;
     
     await ctx.reply("🎤 Распознаю голосовое сообщение...");
     
@@ -184,26 +190,43 @@ bot.on("callback_query:data", async (ctx: MyContext) => {
   const telegramId = ctx.from?.id;
   if (!telegramId) return;
 
-  const data = ctx.callbackQuery.data;
+  const callbackQuery = ctx.callbackQuery;
+  if (!callbackQuery) {
+    await ctx.answerCallbackQuery("❌ Ошибка: нет данных");
+    return;
+  }
+
+  const data = callbackQuery.data;
+  if (!data) {
+    await ctx.answerCallbackQuery("❌ Ошибка: нет данных");
+    return;
+  }
+
   console.log(`Callback data: ${data}`);
 
   // Покупка Pro
   if (data === "buy_pro") {
     try {
-      // Здесь должна быть логика платежей через Telegram Stars
-      await ctx.reply(
-        "⭐️ Отлично! Нажми на кнопку ниже, чтобы оплатить 500 Stars.\n\n" +
-        "После оплаты ты получишь безлимитный доступ ко всем функциям на месяц.",
-        {
-          reply_markup: new InlineKeyboard().text(
-            "💳 Оплатить 500 Stars",
-            "pay_500_stars"
-          ),
-        }
+      // Отправляем платежный запрос через Telegram Stars
+      const chatId = ctx.chat?.id;
+      if (!chatId) {
+        await ctx.answerCallbackQuery("❌ Ошибка: не найден чат");
+        return;
+      }
+
+      await sendPaymentInvoice(
+        ctx,
+        chatId,
+        "⭐️ Pro Subscription",
+        "Безлимитные трансформации и премиум-функции на месяц",
+        "pro_subscription",
+        500 // 500 Stars
       );
+      
+      await ctx.answerCallbackQuery("💰 Открываю платежное окно...");
     } catch (error) {
       console.error("Pro upgrade error:", error);
-      await ctx.reply("❌ Ошибка при оформлении подписки.");
+      await ctx.answerCallbackQuery("❌ Ошибка при оформлении подписки");
     }
     return;
   }
@@ -211,30 +234,46 @@ bot.on("callback_query:data", async (ctx: MyContext) => {
   // Сохранение черновика
   if (data.startsWith("save_") || data.startsWith("save_text_")) {
     try {
-      const message = ctx.callbackQuery.message;
-      if (!message) return;
+      const message = callbackQuery.message;
+      if (!message) {
+        await ctx.answerCallbackQuery("❌ Ошибка: нет сообщения");
+        return;
+      }
       
-      const draft = {
+      // Получаем текст из сообщения
+      let content = "Черновик";
+      if (message.text) {
+        content = message.text;
+      } else if (message.caption) {
+        content = message.caption;
+      }
+      
+      const draft: Omit<Draft, "id" | "created_at" | "updated_at"> = {
         user_id: telegramId,
-        content: message.text || "Черновик",
+        content: content,
         style: "auto",
-        status: "draft",
+        status: "draft", // Используем литерал, а не строку
       };
       
-      await saveDraft(draft);
-      ctx.session.transformCount += 1; // Теперь session доступен!
+      const savedDraft = await saveDraft(draft);
+      ctx.session.transformCount += 1;
       
       await ctx.answerCallbackQuery({
         text: "✅ Черновик сохранен!",
         show_alert: false,
       });
       
+      // Обновляем клавиатуру
+      const newKeyboard = new InlineKeyboard()
+        .text("📝 Просмотреть черновики", "view_drafts")
+        .text("📤 Опубликовать", `publish_${savedDraft.id}`);
+      
       await ctx.editMessageReplyMarkup({
-        reply_markup: new InlineKeyboard().text("📝 Просмотреть", "view_drafts"),
+        reply_markup: newKeyboard,
       });
     } catch (error) {
       console.error("Save draft error:", error);
-      await ctx.answerCallbackQuery("❌ Не удалось сохранить");
+      await ctx.answerCallbackQuery("❌ Не удалось сохранить черновик");
     }
     return;
   }
@@ -242,8 +281,31 @@ bot.on("callback_query:data", async (ctx: MyContext) => {
   // Регенерация поста
   if (data.startsWith("regenerate_")) {
     await ctx.answerCallbackQuery("🔄 Генерирую новые варианты...");
-    // Здесь логика регенерации
-    await ctx.reply("🔄 Новые варианты генерируются...");
+    try {
+      // Получаем текст из сообщения
+      const message = callbackQuery.message;
+      if (!message || !message.text) {
+        await ctx.reply("❌ Не найден текст для регенерации");
+        return;
+      }
+      
+      // Простая логика регенерации - берем первые 100 символов
+      const text = message.text.substring(0, 100);
+      const newPost = await generatePost(text, "educational");
+      
+      await ctx.reply(
+        `🔄 Новый вариант поста:\n\n${newPost}`,
+        {
+          reply_markup: new InlineKeyboard().text(
+            "📝 Сохранить", 
+            `save_regenerated_${Date.now()}`
+          ),
+        }
+      );
+    } catch (error) {
+      console.error("Regeneration error:", error);
+      await ctx.reply("❌ Не удалось регенерировать пост");
+    }
     return;
   }
 
@@ -260,14 +322,89 @@ bot.on("callback_query:data", async (ctx: MyContext) => {
       drafts.slice(0, 5).forEach((draft, index) => {
         const preview = draft.content.substring(0, 100) + "...";
         response += `${index + 1}. ${preview}\n`;
+        response += `   Стиль: ${draft.style}\n\n`;
       });
       
-      await ctx.reply(response);
+      const keyboard = new InlineKeyboard().text(
+        "🚀 Открыть в приложении",
+        "open_miniapp"
+      );
+      
+      await ctx.reply(response, { reply_markup: keyboard });
     } catch (error) {
       console.error("Get drafts error:", error);
       await ctx.reply("❌ Не удалось загрузить черновики.");
     }
     return;
+  }
+
+  // Публикация черновика
+  if (data.startsWith("publish_")) {
+    try {
+      const draftId = parseInt(data.split("_")[1]);
+      if (isNaN(draftId)) {
+        await ctx.answerCallbackQuery("❌ Неверный ID черновика");
+        return;
+      }
+      
+      await updateDraft(draftId, { 
+        status: "published",
+        is_published: true 
+      });
+      
+      await ctx.answerCallbackQuery("✅ Черновик опубликован!");
+      await ctx.reply("🎉 Отлично! Пост опубликован.");
+    } catch (error) {
+      console.error("Publish error:", error);
+      await ctx.answerCallbackQuery("❌ Не удалось опубликовать");
+    }
+    return;
+  }
+
+  // Открыть Mini App
+  if (data === "open_miniapp") {
+    const miniAppUrl = process.env.MINI_APP_URL || "https://your-frontend-domain.com";
+    await ctx.reply(
+      "🚀 Открой панель управления:",
+      {
+        reply_markup: new InlineKeyboard().webApp(
+          "Открыть приложение",
+          `${miniAppUrl}?userId=${telegramId}`
+        ),
+      }
+    );
+    await ctx.answerCallbackQuery();
+    return;
+  }
+
+  // Если ничего не подошло
+  await ctx.answerCallbackQuery("ℹ️ Команда не распознана");
+});
+
+// Обработка платежей (successful payment)
+bot.on("message:successful_payment", async (ctx: MyContext) => {
+  const telegramId = ctx.from?.id;
+  if (!telegramId) return;
+  
+  try {
+    // Обновляем подписку пользователя
+    const user = await getUserByTelegramId(telegramId);
+    if (user) {
+      await updateUserSubscription(telegramId, "pro");
+      
+      await ctx.reply(
+        "🎉 Поздравляю! Ты теперь Pro пользователь!\n\n" +
+        "Теперь тебе доступны:\n" +
+        "✅ Безлимитные трансформации\n" +
+        "✅ Приоритетная обработка\n" +
+        "✅ Эксклюзивные стили постов\n" +
+        "✅ Приоритетная поддержка\n\n" +
+        "Спасибо, что выбрал PostPilot! 🚀"
+      );
+    }
+  } catch (error) {
+    console.error("Payment success error:", error);
+    await ctx.reply("❌ Ошибка при обработке платежа. Обратись в поддержку.");
   }
 });
 
