@@ -1,12 +1,10 @@
-FROM node:18-alpine
+# backend/Dockerfile
+FROM node:20-alpine
 
 WORKDIR /app
 
 # Копируем package файлы
 COPY package*.json ./
-COPY tsconfig.json ./
-
-RUN npm install
 
 # Устанавливаем зависимости
 RUN npm install --legacy-peer-deps
@@ -14,10 +12,17 @@ RUN npm install --legacy-peer-deps
 # Копируем исходный код
 COPY . .
 
-# Вместо npm run build используем npx
+# Даем права на выполнение
+RUN chmod -R +x node_modules/.bin
+
+# Собираем TypeScript
 RUN npx tsc
+
+# Проверяем, что файл создался
+RUN ls -la dist/
 
 # Открываем порт
 EXPOSE 3000
 
-CMD ["node", "dist/index.js"]
+# Запускаем приложение - ПРАВИЛЬНЫЙ ПУТЬ
+CMD ["node", "dist/main.js"]
