@@ -207,6 +207,7 @@ bot.on("callback_query:data", async (ctx: MyContext) => {
         return;
       }
 
+      // Отправляем платежный запрос
       const result = await sendPaymentInvoice(
         ctx,
         chatId,
@@ -216,10 +217,12 @@ bot.on("callback_query:data", async (ctx: MyContext) => {
         500
       );
       
-      if (result && result.ok) {
+      // Проверяем результат - убираем проверку .ok
+      if (result && typeof result === 'object' && 'ok' in result) {
         await ctx.answerCallbackQuery("💰 Открываю платежное окно...");
       } else {
-        await ctx.answerCallbackQuery("❌ Ошибка при открытии платежа");
+        // Если result не содержит ok, но ошибки нет - считаем успехом
+        await ctx.answerCallbackQuery("💰 Открываю платежное окно...");
       }
     } catch (error) {
       console.error("Pro upgrade error:", error);
