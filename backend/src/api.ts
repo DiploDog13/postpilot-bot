@@ -4,6 +4,7 @@ import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 import { verify } from "jsonwebtoken";
 import { webhookHandler } from "./bot";
+import { webhookCallback } from "grammy";
 import { 
   getUserByTelegramId, 
   createUser, 
@@ -517,4 +518,5 @@ app.onError((err, c) => {
   }, 500);
 });
 
+export const webhookHandler = webhookCallback(bot, "hono");
 export default app;
