@@ -1,5 +1,4 @@
 // backend/src/main.ts
-
 import { serve } from "@hono/node-server";
 import app from "./api";
 import { startBot } from "./bot";
@@ -31,7 +30,6 @@ async function main() {
     
     console.log(`✅ API Server running on port ${PORT}`);
     console.log(`🌐 Health check: http://localhost:${PORT}/health`);
-    console.log(`📡 Webhook URL: ${process.env.WEBHOOK_URL || "Not set"}`);
     
   } catch (error) {
     console.error("❌ Failed to start application:", error);
