@@ -4,9 +4,11 @@
   "description": "PostPilot Bot Backend",
   "main": "dist/main.js",
   "scripts": {
-    "dev": "tsx src/main.ts",
-    "build": "tsc",
-    "start": "node dist/main.js"
+    "build": "node ./node_modules/typescript/bin/tsc",
+    "start": "node dist/main.js",
+    "dev": "node --loader ts-node/esm src/main.ts",
+    "watch": "ts-node --watch src/main.ts",
+    "postinstall": "chmod +x node_modules/.bin/*"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.14",
@@ -16,13 +18,24 @@
     "openai": "^4.24.1",
     "pg": "^8.11.3",
     "jsonwebtoken": "^9.0.2",
-    "dotenv": "^16.3.1"
+    "node-fetch": "^3.3.2",
+    "openai": "^4.77.0",
+    "bcryptjs": "^2.4.3"
   },
   "devDependencies": {
-    "@types/node": "^20.10.6",
-    "@types/pg": "^8.10.9",
-    "@types/jsonwebtoken": "^9.0.5",
-    "typescript": "^5.3.3",
-    "tsx": "^4.7.0"
-  }
+    "@types/node": "^22.10.2",
+    "@types/pg": "^8.11.10",
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/bcryptjs": "^2.4.6",
+    "typescript": "^5.7.2",
+    "ts-node": "^10.9.2"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "ai",
+    "postpilot"
+  ],
+  "author": "DiploDog13",
+  "license": "MIT"
 }
