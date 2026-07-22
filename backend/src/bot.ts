@@ -1,6 +1,6 @@
 // backend/src/bot.ts
 
-import { Bot, Context, SessionFlavor, session, InlineKeyboard } from "grammy";
+import { Bot, Context, SessionFlavor, session, InlineKeyboard, webhookCallback } from "grammy";
 import { 
   getUserByTelegramId, 
   createUser, 
