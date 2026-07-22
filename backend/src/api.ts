@@ -1,10 +1,9 @@
 // backend/src/api.ts
-
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { webhookHandler } from "./bot";
 import { HTTPException } from "hono/http-exception";
 import { verify } from "jsonwebtoken";
+import { webhookHandler } from "./bot";
 import { 
   getUserByTelegramId, 
   createUser, 
@@ -24,7 +23,6 @@ import {
 } from "./services/database";
 import { generatePost } from "./services/openai";
 
-// Создаем экземпляр приложения Hono с типизированным контекстом
 type Variables = {
   userId: number;
   telegramId: number;
@@ -41,20 +39,37 @@ app.use("*", cors({
   maxAge: 600,
   credentials: true,
 }));
-// Webhook endpoint для Telegram
+
+// Webhook endpoint для Telegram - ДОЛЖЕН БЫТЬ ПЕРВЫМ!
 app.post("/webhook", async (c) => {
   try {
+    console.log("📨 Webhook received");
+    
+    // Проверяем, что это запрос от Telegram
+    const body = await c.req.json();
+    console.log(`📨 Update ID: ${body.update_id || 'unknown'}`);
+    
     // Передаем запрос в обработчик бота
-    return await webhookHandler(c);
+    const response = await webhookHandler(c);
+    return response;
   } catch (error) {
-    console.error("Webhook error:", error);
-    return c.json({ error: "Webhook failed" }, 500);
+    console.error("❌ Webhook error:", error);
+    return c.json({ error: "Webhook failed", message: String(error) }, 500);
   }
+});
+
+// Health check
+app.get("/health", (c) => {
+  return c.json({
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    version: "1.0.0",
+    uptime: process.uptime(),
+  });
 });
 
 // Middleware для аутентификации
 app.use("/api/*", async (c, next) => {
-  // Пропускаем эндпоинты, которые не требуют аутентификации
   if (c.req.path === "/api/auth/validate") {
     await next();
     return;
@@ -68,7 +83,6 @@ app.use("/api/*", async (c, next) => {
   const token = authHeader.split(" ")[1];
   try {
     const decoded = verify(token, process.env.JWT_SECRET || "default_secret");
-    // Используем c.set с правильными типами
     c.set("userId", (decoded as any).userId);
     c.set("telegramId", (decoded as any).telegramId);
     await next();
@@ -78,9 +92,9 @@ app.use("/api/*", async (c, next) => {
   }
 });
 
-// ==================== АУТЕНТИФИКАЦИЯ ====================
+// ==================== API ENDPOINTS ====================
 
-// Валидация Telegram init data
+// Аутентификация
 app.post("/api/auth/validate", async (c) => {
   try {
     const body = await c.req.json();
@@ -90,7 +104,6 @@ app.post("/api/auth/validate", async (c) => {
       return c.json({ error: "Missing initData or userId" }, 400);
     }
 
-    // Если передан userId, проверяем или создаем пользователя
     if (userId) {
       let user = await getUserByTelegramId(parseInt(userId));
       if (!user) {
@@ -110,11 +123,6 @@ app.post("/api/auth/validate", async (c) => {
       });
     }
 
-    // Здесь должна быть валидация Telegram init data
-    // В реальном проекте используйте:
-    // const isValid = validateTelegramInitData(initData);
-    // if (!isValid) return c.json({ error: "Invalid init data" }, 401);
-
     return c.json({ success: true, message: "Validation successful" });
   } catch (error) {
     console.error("Auth validate error:", error);
@@ -122,9 +130,7 @@ app.post("/api/auth/validate", async (c) => {
   }
 });
 
-// ==================== ПОЛЬЗОВАТЕЛИ ====================
-
-// Получение информации о текущем пользователе
+// Пользователь
 app.get("/api/user", async (c) => {
   try {
     const userId = c.get("userId");
@@ -154,41 +160,7 @@ app.get("/api/user", async (c) => {
   }
 });
 
-// Обновление подписки пользователя
-app.post("/api/user/upgrade", async (c) => {
-  try {
-    const userId = c.get("userId");
-    if (!userId) {
-      throw new HTTPException(401, { message: "Unauthorized" });
-    }
-
-    const body = await c.req.json();
-    const { tier } = body;
-
-    if (!tier || !["free", "pro"].includes(tier)) {
-      return c.json({ error: "Invalid tier. Must be 'free' or 'pro'" }, 400);
-    }
-
-    const user = await updateUserSubscription(userId, tier);
-    return c.json({
-      success: true,
-      user: {
-        id: user.id,
-        telegram_id: user.telegram_id,
-        subscription: user.subscription,
-        tier: user.tier,
-      }
-    });
-  } catch (error) {
-    console.error("Upgrade user error:", error);
-    if (error instanceof HTTPException) throw error;
-    return c.json({ error: "Failed to upgrade user" }, 500);
-  }
-});
-
-// ==================== ЧЕРНОВИКИ ====================
-
-// Получение всех черновиков пользователя
+// Черновики
 app.get("/api/drafts", async (c) => {
   try {
     const userId = c.get("userId");
@@ -215,38 +187,6 @@ app.get("/api/drafts", async (c) => {
   }
 });
 
-// Получение одного черновика по ID
-app.get("/api/drafts/:id", async (c) => {
-  try {
-    const userId = c.get("userId");
-    if (!userId) {
-      throw new HTTPException(401, { message: "Unauthorized" });
-    }
-
-    const id = parseInt(c.req.param("id"));
-    if (isNaN(id)) {
-      return c.json({ error: "Invalid draft ID" }, 400);
-    }
-
-    const draft = await getDraftById(id);
-    if (!draft) {
-      throw new HTTPException(404, { message: "Draft not found" });
-    }
-
-    // Проверяем, что черновик принадлежит пользователю
-    if (draft.user_id !== userId) {
-      throw new HTTPException(403, { message: "Access denied" });
-    }
-
-    return c.json(draft);
-  } catch (error) {
-    console.error("Get draft error:", error);
-    if (error instanceof HTTPException) throw error;
-    return c.json({ error: "Failed to get draft" }, 500);
-  }
-});
-
-// Создание нового черновика
 app.post("/api/drafts", async (c) => {
   try {
     const userId = c.get("userId");
@@ -261,7 +201,6 @@ app.post("/api/drafts", async (c) => {
       return c.json({ error: "Content is required" }, 400);
     }
 
-    // Проверяем лимиты
     const count = await getTransformCount(userId);
     const user = await getUserByTelegramId(userId);
     if (count >= 10 && user?.subscription !== "pro") {
@@ -279,8 +218,6 @@ app.post("/api/drafts", async (c) => {
     };
 
     const draft = await saveDraft(draftData);
-    
-    // Инкрементируем счетчик трансформаций
     await incrementTransformCount(userId);
 
     return c.json({
@@ -295,7 +232,6 @@ app.post("/api/drafts", async (c) => {
   }
 });
 
-// Обновление черновика
 app.put("/api/drafts/:id", async (c) => {
   try {
     const userId = c.get("userId");
@@ -308,13 +244,11 @@ app.put("/api/drafts/:id", async (c) => {
       return c.json({ error: "Invalid draft ID" }, 400);
     }
 
-    // Проверяем существование черновика
     const existingDraft = await getDraftById(id);
     if (!existingDraft) {
       throw new HTTPException(404, { message: "Draft not found" });
     }
 
-    // Проверяем права доступа
     if (existingDraft.user_id !== userId) {
       throw new HTTPException(403, { message: "Access denied" });
     }
@@ -344,7 +278,6 @@ app.put("/api/drafts/:id", async (c) => {
   }
 });
 
-// Удаление черновика
 app.delete("/api/drafts/:id", async (c) => {
   try {
     const userId = c.get("userId");
@@ -357,13 +290,11 @@ app.delete("/api/drafts/:id", async (c) => {
       return c.json({ error: "Invalid draft ID" }, 400);
     }
 
-    // Проверяем существование черновика
     const existingDraft = await getDraftById(id);
     if (!existingDraft) {
       throw new HTTPException(404, { message: "Draft not found" });
     }
 
-    // Проверяем права доступа
     if (existingDraft.user_id !== userId) {
       throw new HTTPException(403, { message: "Access denied" });
     }
@@ -380,9 +311,7 @@ app.delete("/api/drafts/:id", async (c) => {
   }
 });
 
-// ==================== ГЕНЕРАЦИЯ ПОСТОВ ====================
-
-// Генерация поста из текста
+// Генерация постов
 app.post("/api/generate", async (c) => {
   try {
     const userId = c.get("userId");
@@ -397,7 +326,6 @@ app.post("/api/generate", async (c) => {
       return c.json({ error: "Text is required" }, 400);
     }
 
-    // Проверяем лимиты
     const count = await getTransformCount(userId);
     const user = await getUserByTelegramId(userId);
     if (count >= 10 && user?.subscription !== "pro") {
@@ -408,12 +336,8 @@ app.post("/api/generate", async (c) => {
       }, 403);
     }
 
-    // Генерируем пост
     const generatedPost = await generatePost(text, style || "auto", tone);
-    
-    // Инкрементируем счетчик трансформаций
     await incrementTransformCount(userId);
-    
     const remaining = 10 - (await getTransformCount(userId));
 
     return c.json({
@@ -429,9 +353,7 @@ app.post("/api/generate", async (c) => {
   }
 });
 
-// ==================== BRAND VOICE ====================
-
-// Получение всех Brand Voices пользователя
+// Brand Voice
 app.get("/api/brand-voices", async (c) => {
   try {
     const userId = c.get("userId");
@@ -440,7 +362,6 @@ app.get("/api/brand-voices", async (c) => {
     }
 
     const voices = await getBrandVoicesByUser(userId);
-    
     return c.json({
       success: true,
       voices: voices,
@@ -452,7 +373,6 @@ app.get("/api/brand-voices", async (c) => {
   }
 });
 
-// Создание нового Brand Voice
 app.post("/api/brand-voices", async (c) => {
   try {
     const userId = c.get("userId");
@@ -488,9 +408,7 @@ app.post("/api/brand-voices", async (c) => {
   }
 });
 
-// ==================== АНАЛИТИКА ====================
-
-// Получение аналитики пользователя
+// Аналитика
 app.get("/api/analytics", async (c) => {
   try {
     const userId = c.get("userId");
@@ -528,9 +446,7 @@ app.get("/api/analytics", async (c) => {
   }
 });
 
-// ==================== ПЛАТЕЖИ ====================
-
-// Инициация апгрейда на Pro
+// Upgrade
 app.post("/api/upgrade", async (c) => {
   try {
     const userId = c.get("userId");
@@ -545,10 +461,6 @@ app.post("/api/upgrade", async (c) => {
       return c.json({ error: "Payment ID is required" }, 400);
     }
 
-    // Здесь должна быть логика проверки платежа через Telegram Stars
-    // В реальном проекте нужно проверить статус платежа
-
-    // Обновляем подписку пользователя
     const user = await updateUserSubscription(userId, "pro");
 
     return c.json({
@@ -568,22 +480,14 @@ app.post("/api/upgrade", async (c) => {
   }
 });
 
-// ==================== HEALTH CHECK ====================
-
-app.get("/health", (c) => {
-  return c.json({
-    status: "ok",
-    timestamp: new Date().toISOString(),
-    version: "1.0.0",
-  });
-});
-
+// Root
 app.get("/", (c) => {
   return c.json({
     name: "PostPilot Bot API",
     version: "1.0.0",
     status: "running",
     endpoints: {
+      webhook: "/webhook",
       auth: "/api/auth/validate",
       user: "/api/user",
       drafts: "/api/drafts",
@@ -613,5 +517,4 @@ app.onError((err, c) => {
   }, 500);
 });
 
-// Экспортируем приложение
 export default app;
