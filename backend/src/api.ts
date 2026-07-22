@@ -2,6 +2,7 @@
 
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { webhookHandler } from "./bot";
 import { HTTPException } from "hono/http-exception";
 import { verify } from "jsonwebtoken";
 import { 
@@ -40,6 +41,16 @@ app.use("*", cors({
   maxAge: 600,
   credentials: true,
 }));
+// Webhook endpoint для Telegram
+app.post("/webhook", async (c) => {
+  try {
+    // Передаем запрос в обработчик бота
+    return await webhookHandler(c);
+  } catch (error) {
+    console.error("Webhook error:", error);
+    return c.json({ error: "Webhook failed" }, 500);
+  }
+});
 
 // Middleware для аутентификации
 app.use("/api/*", async (c, next) => {
