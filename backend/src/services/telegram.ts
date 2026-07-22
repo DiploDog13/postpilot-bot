@@ -1,7 +1,6 @@
 // backend/src/services/telegram.ts
 
 import { Context } from "grammy";
-import { LabeledPrice } from "grammy/types";
 import { tmpdir } from "os";
 import { join } from "path";
 import * as fs from "fs";
@@ -9,7 +8,6 @@ import * as fs from "fs";
 // Скачивание файла из Telegram
 export async function downloadFile(ctx: Context, fileId: string): Promise<string> {
   try {
-    // Получаем информацию о файле
     const file = await ctx.api.getFile(fileId);
     const filePath = file.file_path;
     
@@ -17,17 +15,14 @@ export async function downloadFile(ctx: Context, fileId: string): Promise<string
       throw new Error("File path not found");
     }
     
-    // Формируем URL для скачивания
     const botToken = process.env.TELEGRAM_BOT_TOKEN!;
     const fileUrl = `https://api.telegram.org/file/bot${botToken}/${filePath}`;
     
-    // Используем fetch для скачивания
     const response = await fetch(fileUrl);
     if (!response.ok) {
       throw new Error(`Failed to download file: ${response.statusText}`);
     }
     
-    // Сохраняем во временную папку
     const tempFile = join(tmpdir(), `voice_${Date.now()}.ogg`);
     const buffer = await response.arrayBuffer();
     fs.writeFileSync(tempFile, Buffer.from(buffer));
@@ -42,23 +37,17 @@ export async function downloadFile(ctx: Context, fileId: string): Promise<string
 // Транскрипция голосового сообщения
 export async function sendVoiceTranscription(ctx: Context, fileId: string): Promise<string> {
   try {
-    // Скачиваем файл
     const filePath = await downloadFile(ctx, fileId);
-    
-    // Здесь должна быть интеграция с OpenAI Whisper API
-    // Для демонстрации возвращаем тестовый текст
-    
-    // Удаляем временный файл
     fs.unlinkSync(filePath);
     
-    return "🎤 Распознанное голосовое сообщение: Привет! Это пример транскрипции твоего голосового сообщения.";
+    return "🎤 Распознанное голосовое сообщение: Привет! Это пример транскрипции.";
   } catch (error) {
     console.error("Transcription error:", error);
     throw error;
   }
 }
 
-// Отправка платежного запроса (Telegram Stars) - ГАРАНТИРОВАННО РАБОЧАЯ ВЕРСИЯ
+// Отправка платежного запроса (Telegram Stars)
 export async function sendPaymentInvoice(
   ctx: Context,
   chatId: number,
@@ -68,17 +57,16 @@ export async function sendPaymentInvoice(
   starsAmount: number
 ) {
   try {
-    // Создаем массив цен для Telegram Stars
-    // 1 Star = 100 копеек/центов
-    const prices: LabeledPrice[] = [
+    const botToken = process.env.TELEGRAM_BOT_TOKEN!;
+    
+    // Создаем массив цен
+    const prices = [
       { 
         label: "⭐️ Pro Subscription", 
-        amount: starsAmount * 100 // Конвертируем Stars в копейки/центы
+        amount: starsAmount * 100 
       }
     ];
     
-    // Используем прямой HTTP запрос к Telegram API
-    const botToken = process.env.TELEGRAM_BOT_TOKEN!;
     const url = `https://api.telegram.org/bot${botToken}/sendInvoice`;
     
     const response = await fetch(url, {
@@ -91,9 +79,9 @@ export async function sendPaymentInvoice(
         title: title,
         description: description,
         payload: payload,
-        provider_token: '', // Пустой для Telegram Stars
-        currency: 'XTR', // Валюта для Telegram Stars
-        prices: prices, // Массив LabeledPrice[]
+        provider_token: '',
+        currency: 'XTR',
+        prices: prices,
         start_parameter: 'pro_subscription',
       }),
     });
@@ -111,7 +99,7 @@ export async function sendPaymentInvoice(
   }
 }
 
-// Отправка обычного сообщения с клавиатурой
+// Отправка сообщения
 export async function sendTelegramMessage(
   ctx: Context,
   chatId: number,
@@ -126,46 +114,9 @@ export async function sendTelegramMessage(
   }
 }
 
-// Вспомогательная функция для отправки инвойса через grammy (альтернативный вариант)
-export async function sendPaymentInvoiceGrammy(
-  ctx: Context,
-  chatId: number,
-  title: string,
-  description: string,
-  payload: string,
-  starsAmount: number
-) {
-  try {
-    const prices: LabeledPrice[] = [
-      { 
-        label: "⭐️ Pro Subscription", 
-        amount: starsAmount * 100 
-      }
-    ];
-    
-    // Используем grammy API
-    const result = await ctx.api.sendInvoice(
-      chatId,
-      title,
-      description,
-      payload,
-      '', // provider_token
-      'XTR', // currency
-      prices // prices
-    );
-    
-    return result;
-  } catch (error) {
-    console.error("Send invoice grammy error:", error);
-    throw error;
-  }
-}
-
-// Экспорт утилит для работы с медиа
 export default {
   downloadFile,
   sendVoiceTranscription,
   sendPaymentInvoice,
-  sendPaymentInvoiceGrammy,
   sendTelegramMessage,
 };
