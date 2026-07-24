@@ -10,19 +10,19 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",
-    "hono": "^4.6.14",
     "dotenv": "^16.4.7",
-    "pg": "^8.13.1",
+    "grammy": "^1.45.1",
+    "hono": "^4.6.14",
     "jsonwebtoken": "^9.0.2",
     "node-fetch": "^3.3.2",
-    "grammy": "^1.31.1",
-    "openai": "^4.77.0"
+    "openai": "^4.104.0",
+    "pg": "^8.13.1"
   },
   "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.7",
     "@types/node": "^22.10.2",
     "@types/pg": "^8.11.10",
-    "@types/jsonwebtoken": "^9.0.7",
-    "typescript": "^5.7.2",
-    "ts-node": "^10.9.2"
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.2"
   }
 }
