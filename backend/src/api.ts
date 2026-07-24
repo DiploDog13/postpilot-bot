@@ -1,4 +1,4 @@
-// backend/src/api.ts
+// backend/src/api.ts - УПРОЩЕННАЯ ВЕРСИЯ ДЛЯ ТЕСТА
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 
@@ -11,17 +11,16 @@ app.use("*", cors({
   allowHeaders: ["Authorization", "Content-Type"],
 }));
 
-// ROOT
+// ROOT - проверка что сервер работает
 app.get("/", (c) => {
   return c.json({
     name: "PostPilot Bot API",
     status: "running",
     timestamp: new Date().toISOString(),
-    version: "1.0.0"
   });
 });
 
-// HEALTH
+// HEALTH - проверка здоровья
 app.get("/health", (c) => {
   return c.json({
     status: "ok",
@@ -30,29 +29,22 @@ app.get("/health", (c) => {
   });
 });
 
-// WEBHOOK
+// WEBHOOK - принимаем запросы от Telegram
 app.post("/webhook", async (c) => {
-  console.log("📨 Webhook received!");
-  
   try {
     const body = await c.req.json();
-    console.log(`📨 Update ID: ${body.update_id || 'unknown'}`);
+    console.log("📨 Webhook received:", JSON.stringify(body).substring(0, 200) + "...");
     
+    // Пока просто отвечаем что получили
     return c.json({ 
-      ok: true,
-      status: "ok",
+      status: "ok", 
       message: "Webhook received",
-      update_id: body.update_id
+      update_id: body.update_id 
     });
   } catch (error) {
     console.error("❌ Webhook error:", error);
-    return c.json({ ok: false, error: "Webhook failed" }, 200);
+    return c.json({ error: "Webhook failed" }, 500);
   }
-});
-
-// 404
-app.notFound((c) => {
-  return c.json({ error: "Route not found" }, 404);
 });
 
 // Обработка ошибок

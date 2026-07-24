@@ -1,9 +1,9 @@
-// backend/src/main.ts - обновленная версия
 import { serve } from "@hono/node-server";
 import app from "./api";
 import dotenv from "dotenv";
+import fs from "fs";
 
-// Загружаем .env файл
+// Загружаем переменные окружения
 dotenv.config();
 
 const PORT = parseInt(process.env.PORT || "3000");
@@ -17,8 +17,8 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 if (!BOT_TOKEN) {
   console.error("❌ TELEGRAM_BOT_TOKEN is not set!");
   console.log("💡 Please set TELEGRAM_BOT_TOKEN in Railway environment variables");
-  console.log("💡 Current env vars:", Object.keys(process.env).filter(k => k.includes('TELEGRAM')));
-  process.exit(1);
+  console.log("💡 Or run: export TELEGRAM_BOT_TOKEN=your_token_here");
+  // Не выходим, чтобы можно было проверить health
 } else {
   console.log(`✅ TELEGRAM_BOT_TOKEN: ${BOT_TOKEN.substring(0, 10)}... (length: ${BOT_TOKEN.length})`);
 }
@@ -35,7 +35,7 @@ if (!WEBHOOK_URL) {
 try {
   console.log("📡 Starting HTTP server...");
   
-  serve({
+  const server = serve({
     fetch: app.fetch,
     port: PORT,
   });
