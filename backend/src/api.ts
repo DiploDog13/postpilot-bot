@@ -17,6 +17,7 @@ app.get("/", (c) => {
     name: "PostPilot Bot API",
     status: "running",
     timestamp: new Date().toISOString(),
+    version: "1.0.0"
   });
 });
 
@@ -31,35 +32,33 @@ app.get("/health", (c) => {
 
 // WEBHOOK
 app.post("/webhook", async (c) => {
+  console.log("📨 Webhook received!");
+  
   try {
-    console.log("📨 Webhook received!");
-    
     const body = await c.req.json();
     console.log(`📨 Update ID: ${body.update_id || 'unknown'}`);
     
-    // Telegram expects 200 OK response
     return c.json({ 
-      status: "ok", 
+      ok: true,
+      status: "ok",
       message: "Webhook received",
-      update_id: body.update_id 
+      update_id: body.update_id
     });
-    
   } catch (error) {
     console.error("❌ Webhook error:", error);
-    // Важно: Telegram требует ответ 200, даже при ошибке
-    return c.json({ error: "Webhook failed" }, 200);
+    return c.json({ ok: false, error: "Webhook failed" }, 200);
   }
-});
-
-// Обработка ошибок
-app.onError((err, c) => {
-  console.error("❌ Server error:", err);
-  return c.json({ error: "Internal server error" }, 200);
 });
 
 // 404
 app.notFound((c) => {
   return c.json({ error: "Route not found" }, 404);
+});
+
+// Обработка ошибок
+app.onError((err, c) => {
+  console.error("❌ Server error:", err);
+  return c.json({ error: "Internal server error" }, 500);
 });
 
 export default app;
