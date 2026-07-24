@@ -6,7 +6,7 @@
   "scripts": {
     "build": "npx tsc",
     "start": "node dist/main.js",
-    "dev": "ts-node src/main.ts"
+    "dev": "npx ts-node src/main.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",
@@ -19,6 +19,7 @@
   "devDependencies": {
     "@types/node": "^22.10.2",
     "@types/pg": "^8.11.10",
+    "@types/jsonwebtoken": "^9.0.7",
     "typescript": "^5.7.2",
     "ts-node": "^10.9.2"
   }
