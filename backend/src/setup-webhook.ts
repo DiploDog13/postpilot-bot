@@ -33,13 +33,14 @@ async function setupWebhook() {
       }
     );
 
-    const result = await response.json();
+    // Исправляем ошибку с типом result
+    const result = await response.json() as { ok: boolean; description?: string };
     
     if (result.ok) {
       console.log(`✅ Webhook set successfully to: ${webhookUrl}`);
       console.log(`📡 Webhook info:`, result);
     } else {
-      console.error(`❌ Failed to set webhook:`, result);
+      console.error(`❌ Failed to set webhook:`, result.description || "Unknown error");
     }
   } catch (error) {
     console.error("❌ Error setting webhook:", error);
