@@ -6,19 +6,13 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const PORT = parseInt(process.env.PORT || "3000");
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const WEBHOOK_URL = process.env.WEBHOOK_URL || "https://postpilot-bot-production.up.railway.app";
 
 console.log("🚀 Starting PostPilot Bot API...");
 console.log(`📡 Port: ${PORT}`);
-console.log(`📡 Environment: ${process.env.NODE_ENV || "development"}`);
-
-// Проверяем наличие токена
-if (!process.env.TELEGRAM_BOT_TOKEN) {
-  console.error("❌ TELEGRAM_BOT_TOKEN is not set!");
-  console.log("💡 Please set TELEGRAM_BOT_TOKEN in Railway environment variables");
-  process.exit(1);
-}
-
-console.log("✅ TELEGRAM_BOT_TOKEN is set");
+console.log(`📡 WEBHOOK_URL: ${WEBHOOK_URL}`);
+console.log(`🤖 BOT_TOKEN: ${BOT_TOKEN ? "✅ Set" : "❌ Not set"}`);
 
 // Запускаем сервер
 try {
@@ -28,9 +22,10 @@ try {
   });
   
   console.log(`✅ API Server running on port ${PORT}`);
-  console.log(`🌐 Health check: https://${process.env.RAILWAY_STATIC_URL || 'localhost'}/health`);
-  console.log(`📡 Webhook URL: https://${process.env.RAILWAY_STATIC_URL || 'localhost'}/webhook`);
+  console.log(`🌐 Health check: ${WEBHOOK_URL}/health`);
+  console.log(`📡 Webhook URL: ${WEBHOOK_URL}/webhook`);
   console.log("🎉 PostPilot Bot API is ready!");
+  
 } catch (error) {
   console.error("❌ Failed to start server:", error);
   process.exit(1);
