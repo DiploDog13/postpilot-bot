@@ -1,5 +1,4 @@
 // backend/src/services/telegram.ts
-
 import { Context } from "grammy";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -59,7 +58,6 @@ export async function sendPaymentInvoice(
   try {
     const botToken = process.env.TELEGRAM_BOT_TOKEN!;
     
-    // Создаем массив цен
     const prices = [
       { 
         label: "⭐️ Pro Subscription", 
@@ -86,10 +84,10 @@ export async function sendPaymentInvoice(
       }),
     });
     
-    const result = await response.json();
+    const result = await response.json() as { ok: boolean; description?: string };
     
     if (!response.ok) {
-      throw new Error(`Telegram API error: ${JSON.stringify(result)}`);
+      throw new Error(`Telegram API error: ${result.description || 'Unknown error'}`);
     }
     
     return result;
