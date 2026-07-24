@@ -1,6 +1,7 @@
 // backend/src/api.ts
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { webhookHandler } from "./bot";
 
 const app = new Hono();
 
@@ -12,7 +13,6 @@ app.use("*", cors({
 
 // Health
 app.get("/health", (c) => {
-  console.log("🏥 Health check");
   return c.json({ 
     status: "ok", 
     timestamp: new Date().toISOString(),
@@ -29,21 +29,11 @@ app.get("/", (c) => {
   });
 });
 
-// Webhook
+// Webhook - используем обработчик из bot.ts
 app.post("/webhook", async (c) => {
-  console.log("📨 Webhook received!");
-  
   try {
-    const body = await c.req.json();
-    console.log(`📨 Update ID: ${body.update_id || 'unknown'}`);
-    
-    // Всегда возвращаем 200 для Telegram
-    return c.json({ 
-      ok: true,
-      status: "ok",
-      message: "Webhook received",
-      update_id: body.update_id
-    });
+    console.log("📨 Webhook received!");
+    return await webhookHandler(c);
   } catch (error) {
     console.error("❌ Webhook error:", error);
     return c.json({ ok: false, error: "Webhook failed" }, 200);
@@ -53,12 +43,6 @@ app.post("/webhook", async (c) => {
 // 404
 app.notFound((c) => {
   return c.json({ error: "Route not found" }, 404);
-});
-
-// Error handler
-app.onError((err, c) => {
-  console.error("❌ Server error:", err);
-  return c.json({ error: "Internal server error" }, 500);
 });
 
 export default app;
